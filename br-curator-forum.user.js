@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.5.2
+// @version      5.5.3
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.5.3 — тема: выбор префикса и второстепенные кнопки в тёмном стиле
 // @note         5.5.2 — меню выезжает снизу шторкой и не обрезается; шестерёнка меньше и бледнеет при прокрутке
 // @note         5.5.1 — тема: убран серый фон строк разделов, бирюзовые иконки разделов
 // @note         5.5.0 — тема оформления всего форума (вкл/выкл в настройках)
@@ -97,6 +98,13 @@
     html.brc-theme .input,html.brc-theme input.input,html.brc-theme textarea.input,html.brc-theme select.input,html.brc-theme .fr-box,html.brc-theme .fr-wrapper,html.brc-theme .fr-toolbar{
       background:#0f1517!important;border-color:#ffffff16!important;color:var(--bt-txt)!important}
     html.brc-theme .input,html.brc-theme .fr-box{border-radius:12px!important}
+    html.brc-theme .inputGroup .input,html.brc-theme .inputGroup-text,html.brc-theme .inputGroup .button,html.brc-theme .js-prefixSelect,
+    html.brc-theme .prefixSelect,html.brc-theme .inputGroup .menuTrigger,html.brc-theme .input--select,html.brc-theme select{
+      background:#0f1517!important;border-color:#ffffff16!important;color:var(--bt-txt)!important}
+    html.brc-theme .inputGroup{border-radius:12px;overflow:hidden}
+    html.brc-theme .buttonGroup .button,html.brc-theme .button--link,html.brc-theme .buttonGroup-buttonWrapper .button,
+    html.brc-theme .block-outer .button:not(.button--cta){background:var(--bt-card2)!important;border:1px solid var(--bt-line)!important;color:var(--bt-txt)!important}
+    html.brc-theme .buttonGroup .button:hover,html.brc-theme .button--link:hover{background:#22303a!important}
     html.brc-theme .input:focus,html.brc-theme .fr-box.is-focused{border-color:var(--bt-acc)!important;box-shadow:0 0 0 3px #40c4d322!important}
 
     html.brc-theme .menu-content,html.brc-theme .offCanvasMenu-content,html.brc-theme .tooltip-content{background:#12191c!important;border:1px solid var(--bt-line)!important;border-radius:16px!important;color:var(--bt-txt)!important}
@@ -198,7 +206,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.5.2';
+  const VERSION = '5.5.3';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
