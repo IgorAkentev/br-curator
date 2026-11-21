@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.2.0
+// @version      5.2.1
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.2.1 — верные ID префиксов по умолчанию (8/4/2), точные адреса разделов
 // @note         5.2.0 — после вердикта тема переносится в подраздел (Одобренные / Неодобренные / На доработке)
 // @note         5.1.0 — шпаргалка правил с поиском, своя подпись в ответах
 // @note         5.0.2 — ID префиксов берутся из формы редактирования темы и подразделов; честная ошибка в очереди
@@ -28,11 +29,11 @@
   /* ===================== НАСТРОЙКИ ===================== */
 
   // ID префиксов — ПРОВЕРЬ: "Редактировать тему" -> список префиксов -> value у option
-  // ID префиксов определяются автоматически по ссылкам префиксов на форуме; цифры ниже — запасные
+  // ID префиксов определяются автоматически; цифры ниже — проверенные для Khabarovsk 49 (Одобрено 8, Отказано 4, На рассмотрении 2)
   const PREFIX = {
     get ACCEPT() { return pfx('одобрен', 8); },
-    get DECLINE() { return pfx('отказ', 7); },
-    get WATCHED() { return pfx('рассмотр', 9); },
+    get DECLINE() { return pfx('отказ', 4); },
+    get WATCHED() { return pfx('рассмотр', 2); },
   };
   const FONTS = /verdana|times new roman/i;
   const MIN_FONT_PX = 15;
@@ -102,7 +103,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.2.0';
+  const VERSION = '5.2.1';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -333,9 +334,21 @@
     learnPrefixes(root);
     return out.sort((a, b) => a.left - b.left);
   }
+  // Запоминаем настоящие адреса разделов (из хлебных крошек и ссылок на странице)
+  (function learnSecUrls() {
+    const su = ls.get('sec_url', {});
+    let ch = false;
+    for (const id of Object.keys(SECTIONS)) {
+      const a = document.querySelector(`a[href*=".${id}/"]`);
+      if (a) { const u = new URL(a.getAttribute('href'), location.origin).pathname.replace(/(\.\d+\/).*/, '$1'); if (su[id] !== u) { su[id] = u; ch = true; } }
+    }
+    if (ch) ls.set('sec_url', su);
+  })();
+  const secUrl = (id) => ls.get('sec_url', {})[id] || `/forums/${id}/`;
+
   const getDoc = async (url) => new DOMParser().parseFromString(await (await fetch(url, { credentials: 'same-origin' })).text(), 'text/html');
   async function fetchQueue(id) {
-    const d = await getDoc(`/forums/${id}/`);
+    const d = await getDoc(secUrl(id));
     learnMoves(d, String(id));
     if (!d.querySelector('.structItem--thread, .js-threadList, .structItemContainer')) throw new Error('раздел не открылся');
     return queueFromDoc(d);
@@ -354,7 +367,7 @@
     };
     for (const id of SEC_ORDER) {
       try {
-        const d = await getDoc(`/forums/${id}/`);
+        const d = await getDoc(secUrl(id));
         learnPrefixes(d);
         learnMoves(d, id);
         pushEdit(d);
@@ -650,7 +663,7 @@
         const x = c.secs[id];
         if (!x) return `<div class="qrow"><span class="nm2">${sc.name}</span><span class="qe">не загрузилось</span></div>`;
         late += x.late;
-        return `<a class="qrow" href="/forums/${id}/"><span class="nm2">${sc.name}</span>
+        return `<a class="qrow" href="${secUrl(id)}"><span class="nm2">${sc.name}</span>
           ${x.late ? `<span class="ql">🔥 ${x.late}</span>` : ''}${x.soon ? `<span class="qs">⏳ ${x.soon}</span>` : ''}
           <span class="qn">${x.total}</span></a>`;
       }).join('');
