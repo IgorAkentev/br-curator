@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      3.2.0
+// @version      4.0.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         4.0.0 — поиск копипаста и дублей, очередь с таймерами в разделах, контроль доработки 24ч, свои причины, подсветка в тексте
 // @note         3.2.0 — новый дизайн панели, починены ложные срабатывания (заголовок, имя, фото)
 // @note         3.1.0 — плавающая кнопка: проверка и установка обновлений
 // @note         3.0.0 — проверки под правила разделов Хабаровска
@@ -89,7 +90,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '3.2.0';
+  const VERSION = '4.0.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -179,6 +180,66 @@
     if (Date.now() - last > CHECK_EVERY_H * 3600e3) check(false);
   })();
 
+  /* ===================== 3. ОЧЕРЕДЬ НА СТРАНИЦЕ РАЗДЕЛА ===================== */
+
+  (function queue() {
+    const m = location.pathname.match(/^\/forums\/[^/]*\.(\d+)\/?/);
+    if (!m || !SECTIONS[m[1]]) return;
+    const items = [...document.querySelectorAll('.structItem--thread')];
+    if (!items.length) return;
+
+    const st = document.createElement('style');
+    st.textContent = `
+      .brcq{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:12px;font:700 11px/18px -apple-system,Segoe UI,Roboto,sans-serif;vertical-align:middle;white-space:nowrap}
+      .brcq.g{background:#1ec27a22;color:#1ec27a}.brcq.y{background:#ffb54722;color:#ffb547}.brcq.r{background:#ff5468;color:#fff}
+      .brcq-late{box-shadow:inset 3px 0 0 #ff5468}
+      #brcq-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0;padding:12px 14px;border-radius:14px;
+        background:#11181bf2;border:1px solid #3ec6d055;color:#e6edf0;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 6px 18px #0006}
+      #brcq-bar b{font-size:15px}
+      #brcq-bar .sp{flex:1}
+      #brcq-bar button{border:none;border-radius:10px;padding:8px 12px;font-weight:800;color:#fff;cursor:pointer;background:linear-gradient(135deg,#3ec6d0,#1ec27a)}
+    `;
+    document.head.appendChild(st);
+
+    const now = Date.now() / 1000;
+    const data = [];
+    for (const it of items) {
+      if (it.querySelector('.structItem-status--sticky')) continue;
+      const pref = (it.querySelector('.structItem-title .label')?.textContent || '').trim();
+      if (it.querySelector('.structItem-status--locked') || /одобрен|отказ|закрыт/i.test(pref)) continue;
+      const t = +(it.querySelector('.structItem-startDate time, time.u-dt')?.getAttribute('data-time') || 0);
+      if (!t) continue;
+      const left = 72 - Math.floor((now - t) / 3600);
+      data.push({ it, left });
+      const chip = document.createElement('span');
+      chip.className = 'brcq ' + (left <= 0 ? 'r' : left <= 24 ? 'y' : 'g');
+      chip.textContent = left <= 0 ? `⏱ просрочено на ${-left} ч` : `⏱ ${left} ч`;
+      (it.querySelector('.structItem-title') || it).appendChild(chip);
+      if (left <= 0) it.classList.add('brcq-late');
+    }
+
+    const late = data.filter((d) => d.left <= 0).length;
+    const soon = data.filter((d) => d.left > 0 && d.left <= 24).length;
+    const bar = document.createElement('div');
+    bar.id = 'brcq-bar';
+    bar.innerHTML = `<span>📋 В очереди: <b>${data.length}</b></span>
+      <span style="color:#ff5468">🔥 Просрочено: <b>${late}</b></span>
+      <span style="color:#ffb547">⏳ Меньше суток: <b>${soon}</b></span>
+      <span class="sp"></span><button>⇅ По сроку</button>`;
+    const anchorEl = items[0].closest('.block') || items[0].parentElement;
+    anchorEl.parentElement.insertBefore(bar, anchorEl);
+
+    bar.querySelector('button').onclick = () => {
+      const parent = data[0]?.it.parentElement;
+      if (!parent) return;
+      // самые горящие — наверх (закреплённые у XenForo в отдельной группе, их не трогаем)
+      [...data].sort((a, b) => b.left - a.left).forEach((d) => {
+        if (d.it.parentElement === parent) parent.prepend(d.it);
+      });
+      bar.querySelector('button').textContent = '✓ Отсортировано';
+    };
+  })();
+
   /* ===================== ДАЛЬШЕ — ТОЛЬКО В ТЕМАХ ===================== */
 
   const threadBase =(location.href.match(/^(https:\/\/forum\.blackrussia\.online\/threads\/[^/]+\.\d+\/)/) || [])[1];
@@ -198,6 +259,111 @@
     c.querySelectorAll('.label, .label-append, .labelLink').forEach((x) => x.remove());
     return c.textContent.replace(/\s+/g, ' ').trim();
   };
+
+  const threadId = (threadBase.match(/\.(\d+)\/$/) || [])[1];
+  const authorId = qs('.message-name [data-user-id]', firstMsg)?.getAttribute('data-user-id');
+  const RULE = { bio: { copy: '1.4', rw: '2.2' }, sit: { copy: '1.10', rw: '2.4' }, org: { copy: '1.5', rw: '2.5' } }[sec.key];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const token = () => window.XF?.config?.csrf || qs('input[name="_xfToken"]')?.value || '';
+  const parseDoc = (h) => new DOMParser().parseFromString(h, 'text/html');
+  const RX_MIXED = /[А-Яа-яЁё]+[A-Za-z]+[А-Яа-яЁёA-Za-z]*|[A-Za-z]+[А-Яа-яЁё]+[А-Яа-яЁёA-Za-z]*/g;
+
+  // Результаты поиска XenForo -> [{id, href, title, label, minor, user}]
+  function searchResults(d) {
+    return [...d.querySelectorAll('li.block-row')].map((li) => {
+      const a = li.querySelector('.contentRow-title a[href*="/threads/"]');
+      if (!a) return null;
+      const href = new URL(a.getAttribute('href'), location.origin).href;
+      return {
+        id: (href.match(/\.(\d+)\//) || [])[1],
+        href: href.replace(/(\/threads\/[^/]+\/).*/, '$1'),
+        title: a.textContent.replace(/\s+/g, ' ').trim(),
+        label: (li.querySelector('.contentRow-title .label')?.textContent || '').trim(),
+        minor: (li.querySelector('.contentRow-minor')?.textContent || '').replace(/\s+/g, ' ').trim(),
+        user: (li.querySelector('.contentRow-minor .username')?.textContent || '').trim(),
+      };
+    }).filter(Boolean);
+  }
+
+  function searchError(d) {
+    const e = (d.querySelector('.blockMessage--error, .p-body-pageContent > .blockMessage')?.textContent || '').trim();
+    if (/подожд|секунд|wait/i.test(e)) throw new Error('flood');
+  }
+
+  async function forumSearch(phrase) {
+    const fd = new FormData();
+    fd.append('keywords', `"${phrase}"`);
+    fd.append('order', 'relevance');
+    fd.append('grouped', '1');
+    fd.append('_xfToken', token());
+    const r = await fetch('/search/search', { method: 'POST', body: fd, credentials: 'same-origin' });
+    const d = parseDoc(await r.text());
+    searchError(d);
+    return searchResults(d);
+  }
+
+  // Уникальные фразы из текста (по 8 слов из середины самых длинных предложений)
+  function pickPhrases() {
+    return text.split(/[.!?…\n]+/)
+      .map((s) => s.replace(/^[^:]{0,40}:/, '').match(/[А-Яа-яЁё]+/g) || [])
+      .filter((w) => w.length >= 10)
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 2)
+      .map((w) => { const st = Math.floor((w.length - 8) / 2); return w.slice(st, st + 8).join(' '); });
+  }
+  let copyPhrases = pickPhrases();
+
+  // 1. Копипаст
+  async function copyCheck() {
+    if (!copyPhrases.length) return { s: 'warn', t: 'Копипаст: мало текста для поиска — проверь через Google' };
+    const hits = [];
+    for (let i = 0; i < copyPhrases.length; i++) {
+      if (i) await sleep(2500);
+      hits.push(...(await forumSearch(copyPhrases[i])).filter((h) => h.id !== threadId));
+      if (hits.length) break;
+    }
+    if (!hits.length) return { s: 'ok', t: 'Копипаст: совпадений на форуме нет' };
+    const h = hits[0];
+    if (h.user && h.user === author) return { s: 'warn', t: `Тот же текст в другой теме автора: «${h.title}»`, link: h.href };
+    return { s: 'fail', t: `Копипаст! Совпадение: «${h.title}»${h.user ? ' — ' + h.user : ''}`, link: h.href,
+      r: `${sec.what} скопирована у другого игрока: ${h.href} (п. ${RULE.copy}).` };
+  }
+
+  // 2. Дубли — другие темы автора
+  async function dupCheck() {
+    if (sec.key === 'sit') return null;
+    if (!authorId) return { s: 'warn', t: 'Дубли: не смог определить автора' };
+    const r = await fetch(`/search/member?user_id=${authorId}&content=thread`, { credentials: 'same-origin' });
+    const d = parseDoc(await r.text());
+    searchError(d);
+    const re = sec.key === 'bio' ? /биограф/i : /организац/i;
+    const rows = searchResults(d).filter((x) => x.id !== threadId && re.test(x.minor + ' ' + x.title));
+    if (!rows.length) return { s: 'ok', t: 'Дубли: других тем автора в разделе нет' };
+    const st = (x) => /одобрен/i.test(x.label + ' ' + x.minor) ? 'acc' : /отказ|закрыт/i.test(x.label + ' ' + x.minor) ? 'dec' : 'pend';
+    const acc = rows.find((x) => st(x) === 'acc');
+    const pend = rows.find((x) => st(x) === 'pend');
+    if (sec.key === 'bio' && acc) return { s: 'fail', t: `Уже есть одобренная био: «${acc.title}»`, link: acc.href,
+      r: `На данный аккаунт уже имеется одобренная RP биография: ${acc.href}` };
+    if (pend) return { s: 'fail', t: `Дубль: ещё одна тема «${pend.title}»`, link: pend.href,
+      r: `Тема является дублем — у вас уже есть тема на рассмотрении: ${pend.href}` };
+    if (acc) return { s: 'warn', t: `У автора уже есть одобренная организация: «${acc.title}»`, link: acc.href };
+    return { s: 'ok', t: `Дубли: прошлых тем ${rows.length}, все отказаны`, link: rows[0].href };
+  }
+
+  // 4. Доработка — последнее сообщение не от автора содержит "доработк"
+  function reworkState() {
+    const msgs = [...document.querySelectorAll('article.message')];
+    const who = (m) => (qs('.message-name .username', m)?.textContent || '').trim();
+    const when = (m) => +(qs('time.u-dt', m)?.getAttribute('data-time') || 0);
+    const staff = msgs.filter((m) => m !== firstMsg && who(m) !== author);
+    const last = staff[staff.length - 1];
+    if (!last || !/доработк/i.test(qs('.bbWrapper', last)?.innerText || '')) return null;
+    const t = when(last);
+    if (!t) return null;
+    const edited = +(qs('.message-lastEdit time', firstMsg)?.getAttribute('data-time') || 0) > t;
+    const replied = msgs.some((m) => who(m) === author && when(m) > t);
+    return { fixed: edited || replied, edited, left: 24 - Math.floor((Date.now() / 1000 - t) / 3600) };
+  }
 
   /* ===================== ПРОВЕРКИ ===================== */
   // { s: 'ok'|'warn'|'fail', t: 'строка в списке', r: 'причина для ответа' }
@@ -323,6 +489,11 @@
     res.push(err <= 3 ? { s: 'ok', t: 'Явных ошибок оформления нет' }
       : { s: 'warn', t: `Похоже на ошибки (${err}) — проверь глазами` });
 
+    // Смешанные буквы (латиница внутри русских слов — обход антиплагиата)
+    const mixed = (text.match(RX_MIXED) || []).length;
+    res.push(!mixed ? { s: 'ok', t: 'Без подмены букв' }
+      : { s: 'warn', t: `Латиница внутри русских слов: ${mixed} — признак обхода антиплагиата` });
+
     return res;
   }
 
@@ -409,8 +580,7 @@
   async function choose(html, opts) {
     if (!insertReply(html)) return toast('Не нашёл поле ответа');
     pending = opts;
-    qs('#brc-send').style.display = 'block';
-    qs('#brc-send').textContent = '📨 Отправить' + (opts.close ? ' + закрыть' : '') + (opts.sticky ? ' + закрепить' : '');
+    showSend('📨 Отправить' + (opts.close ? ' + закрыть' : '') + (opts.sticky ? ' + закрепить' : ''));
     if (AUTO_SEND) await finish();
     else toast('Ответ вставлен — проверь и жми «Отправить»');
   }
@@ -481,6 +651,27 @@
     #brc .load{display:flex;align-items:center;gap:10px;color:var(--mut)}
     #brc .sp{width:18px;height:18px;border-radius:50%;border:2px solid #3ec6d055;border-top-color:#3ec6d0;animation:brcsp 0.8s linear infinite}
     @keyframes brcsp{to{transform:rotate(360deg)}}
+    #brc .bn{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:14px;padding:11px 13px;border-radius:12px;font-weight:600}
+    #brc .bn.r{background:#ff546818;border:1px solid #ff546855}#brc .bn.y{background:#ffb54718;border:1px solid #ffb54755}#brc .bn.t{background:#3ec6d018;border:1px solid #3ec6d055}
+    #brc .bn .a{flex:1 1 100%;flex-direction:row;justify-content:center}
+    #brc .lnk{color:var(--b);font-weight:700;white-space:nowrap}
+    #brc .ic .sp{width:12px;height:12px;border-width:2px}
+    #brc .it.load{border-color:var(--b);opacity:.8}#brc .load .ic{background:transparent}
+    #brc .tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+    #brc .tb{flex:1;text-align:center;padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:#ffffff0a;color:var(--txt);font-weight:700;font-size:13px;cursor:pointer;text-decoration:none}
+    #brc .tb.on{border-color:var(--b);color:var(--b)}
+    #brc .legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;font-size:11px}
+    #brc .addr{display:flex;gap:6px;margin-top:8px}
+    #brc .addr input{flex:1;min-width:0;padding:8px 10px;border-radius:9px;border:1px solid var(--line);background:#0006;color:var(--txt);font-size:13px}
+    #brc .addr button{width:40px;border:none;border-radius:9px;background:var(--b);color:#012;font-weight:900;font-size:18px;cursor:pointer}
+    #brc .ck .del{margin-left:auto;background:none;border:none;color:var(--mut);font-size:18px;line-height:1;cursor:pointer}
+    mark.brc-m{color:inherit;border-radius:3px;padding:0 1px}
+    mark.brc-m.copy{background:#a66bff55;outline:1px solid #a66bff}
+    mark.brc-m.mix{background:#ff546866;outline:1px solid #ff5468}
+    mark.brc-m.caps{background:#ff8a3d55}
+    mark.brc-m.low{background:#ffb54755}
+    mark.brc-m.sp{background:#ffe14755}
+    mark.brc-m.sup{background:#3ec6d055}
     #brc-toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%) translateY(20px);opacity:0;transition:.25s;
       background:#11181bf2;color:#e6edf0;border:1px solid #3ec6d066;padding:10px 16px;border-radius:12px;z-index:100002;
       box-shadow:0 8px 24px #000a;font:600 13px -apple-system,Segoe UI,Roboto,sans-serif;pointer-events:none}
@@ -507,16 +698,84 @@
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-  runChecks().then((checks) => {
-    const ok = checks.filter((c) => c.s === 'ok');
-    const warns = checks.filter((c) => c.s === 'warn');
-    const fails = checks.filter((c) => c.s === 'fail');
-    const manual = MANUAL[sec.key];
+  /* ---------- состояние ---------- */
+  const esc2 = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const manual = MANUAL[sec.key];
+  const custKey = 'custom_' + sec.key;
+  const getCust = () => ls.get(custKey, []);
+  const rw = reworkState();
+  const state = { rsOpen: false, okOpen: false, send: '', hl: false };
+  const sel = new Set();      // выбранные причины (текстом)
+  const seen = new Set();     // авто-причины, которые уже предлагались
+  let checks = [];
 
-    const pct = Math.round((ok.length / checks.length) * 100);
+  function showSend(label) {
+    state.send = label;
+    const b = qs('#brc-send');
+    if (b) { b.style.display = 'block'; b.textContent = label; }
+  }
+
+  /* ---------- 6. подсветка в тексте ---------- */
+  let hlOrig = null;
+  const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const HL_RULES = () => [
+    ['copy', copyPhrases.length ? new RegExp(copyPhrases.map((p) => p.split(' ').map(reEsc).join('[\\s,;:—–-]+')).join('|'), 'gi') : null, 'Фраза, по которой искали копипаст'],
+    ['mix', new RegExp(RX_MIXED.source, 'g'), 'Латиница внутри русского слова'],
+    ['caps', /(?<![А-Яа-яЁёA-Za-z])[А-ЯЁ]{4,}(?![А-Яа-яЁёA-Za-z])/g, 'Капс'],
+    ['low', /[.!?]\s+[а-яё]/g, 'Предложение с маленькой буквы'],
+    ['sp', /[а-яё][,.!?](?=[а-яё])/gi, 'Нет пробела после знака'],
+    ['sup', new RegExp(RX_SUPER.source, 'gi'), 'Сверхъестественное'],
+  ].filter((r) => r[1]);
+
+  function toggleHL() {
+    if (!post) return 0;
+    if (hlOrig !== null) { post.innerHTML = hlOrig; hlOrig = null; state.hl = false; return 0; }
+    hlOrig = post.innerHTML;
+    state.hl = true;
+    let count = 0;
+    for (const [cls, re, tip] of HL_RULES()) {
+      const nodes = [];
+      const w = document.createTreeWalker(post, NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) => (n.parentElement.closest('mark.brc-m') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+      });
+      while (w.nextNode()) nodes.push(w.currentNode);
+      for (const n of nodes) {
+        const str = n.textContent;
+        re.lastIndex = 0;
+        let m, last = 0, hit = false;
+        const frag = document.createDocumentFragment();
+        while ((m = re.exec(str))) {
+          if (!m[0]) { re.lastIndex++; continue; }
+          hit = true;
+          frag.append(str.slice(last, m.index));
+          const mk = document.createElement('mark');
+          mk.className = 'brc-m ' + cls;
+          mk.title = tip;
+          mk.textContent = m[0];
+          frag.append(mk);
+          last = m.index + m[0].length;
+          count++;
+        }
+        if (hit) { frag.append(str.slice(last)); n.replaceWith(frag); }
+      }
+    }
+    return count;
+  }
+
+  /* ---------- отрисовка ---------- */
+  function render() {
+    const draft = qs('#brc-newr', box)?.value || '';
+    const done = checks.filter((c) => c.s !== 'load');
+    const loading = checks.filter((c) => c.s === 'load');
+    const ok = done.filter((c) => c.s === 'ok');
+    const warns = done.filter((c) => c.s === 'warn');
+    const fails = done.filter((c) => c.s === 'fail');
+    fails.forEach((f) => { if (!seen.has(f.r)) { seen.add(f.r); sel.add(f.r); } });
+
+    const pct = Math.round((ok.length / (done.length || 1)) * 100);
     const col = fails.length ? 'var(--r)' : warns.length ? 'var(--y)' : 'var(--g)';
-    const verdict = fails.length ? `Найдено нарушений: ${fails.length}` : warns.length ? 'Проверь пару моментов' : 'Можно одобрять';
-    const R = 26, C = 2 * Math.PI * R;
+    const verdict = fails.length ? `Найдено нарушений: ${fails.length}` : warns.length ? 'Проверь пару моментов' : loading.length ? 'Пока чисто…' : 'Можно одобрять';
+    const RR = 26, C = 2 * Math.PI * RR;
 
     const posted = qs('time.u-dt', firstMsg)?.getAttribute('data-time');
     const hours = posted ? Math.floor((Date.now() / 1000 - +posted) / 3600) : null;
@@ -524,14 +783,25 @@
       ? `<span class="chip late">⏱ просрочено (${hours} ч)</span>`
       : `<span class="chip t">⏱ осталось ${72 - hours} ч</span>`;
 
-    const item = (c) => `<div class="it ${c.s}"><div class="ic">${{ ok: '✓', warn: '!', fail: '✕' }[c.s]}</div><div>${esc(c.t)}</div></div>`;
-    const ck = (txt, attr, on) => `<label class="ck"><input type="checkbox" ${attr} ${on ? 'checked' : ''}><i></i><span>${esc(txt)}</span></label>`;
+    const item = (c) => `<div class="it ${c.s}"><div class="ic">${c.s === 'load' ? '<i class="sp"></i>' : { ok: '✓', warn: '!', fail: '✕' }[c.s]}</div>
+      <div>${esc2(c.t)}${c.link ? ` <a class="lnk" href="${esc2(c.link)}" target="_blank">открыть ↗</a>` : ''}</div></div>`;
+    const ck = (txt, del) => `<label class="ck"><input type="checkbox" data-t="${esc2(txt)}" ${sel.has(txt) ? 'checked' : ''}><i></i><span>${esc2(txt)}</span>${
+      del != null ? `<button class="del" data-del="${del}" title="Удалить">×</button>` : ''}</label>`;
+
+    let banner = '';
+    if (rw && !rw.fixed && rw.left <= 0) banner = `<div class="bn r"><div>⏰ <b>24 ч на доработку вышли</b> — автор ничего не исправил.</div>
+      <button class="a no" id="brc-rwno"><span>⛔</span>Отказать: не исправлено</button></div>`;
+    else if (rw && !rw.fixed) banner = `<div class="bn y">🛠 Тема на доработке — у автора осталось <b>${rw.left} ч</b>.</div>`;
+    else if (rw && rw.fixed) banner = `<div class="bn t">✏️ Автор ${rw.edited ? 'отредактировал тему' : 'ответил'} после доработки — перепроверь.</div>`;
+
+    const q = copyPhrases[0] ? encodeURIComponent(`"${copyPhrases[0]}"`) : '';
+    const cust = getCust();
 
     box.innerHTML = `<div class="in">
       <div class="hd">
         <div class="ring">
-          <svg width="62" height="62"><circle cx="31" cy="31" r="${R}" stroke="#ffffff14" stroke-width="6" fill="none"/>
-            <circle cx="31" cy="31" r="${R}" stroke="${col}" stroke-width="6" fill="none" stroke-linecap="round"
+          <svg width="62" height="62"><circle cx="31" cy="31" r="${RR}" stroke="#ffffff14" stroke-width="6" fill="none"/>
+            <circle cx="31" cy="31" r="${RR}" stroke="${col}" stroke-width="6" fill="none" stroke-linecap="round"
               stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}" style="transition:stroke-dashoffset .8s"/></svg>
           <b style="color:${col}">${pct}%</b>
         </div>
@@ -546,65 +816,134 @@
       </div>
 
       <div class="body">
+        ${banner}
         <div class="acts">
           <button class="a ok" id="brc-ok" ${fails.length ? 'disabled title="Есть нарушения"' : ''}><span>✅</span>Одобрить</button>
-          <button class="a no" id="brc-no"><span>⛔</span>Отказ / доработка</button>
+          <button class="a no ${state.rsOpen ? 'on' : ''}" id="brc-no"><span>⛔</span>Отказ / доработка</button>
           <button class="a wt" id="brc-wt"><span>⏳</span>На рассмотрение</button>
         </div>
 
-        <div class="rs" id="brc-rs">
-          ${fails.length ? '<div class="sub">НАЙДЕНО СКРИПТОМ</div>' + fails.map((f, i) => ck(f.r, `data-r="${i}"`, true)).join('') : ''}
+        <div class="rs ${state.rsOpen ? 'open' : ''}" id="brc-rs">
+          ${fails.length ? '<div class="sub">НАЙДЕНО СКРИПТОМ</div>' + fails.map((f) => ck(f.r)).join('') : ''}
           <div class="sub">ОТМЕТЬ САМ, ЕСЛИ ЕСТЬ</div>
-          ${manual.map((m, i) => ck(m, `data-m="${i}"`, false)).join('')}
+          ${manual.map((m) => ck(m)).join('')}
+          ${cust.length ? '<div class="sub">ТВОИ ПРИЧИНЫ</div>' + cust.map((c, i) => ck(c, i)).join('') : ''}
+          <div class="addr"><input id="brc-newr" placeholder="Своя причина, например: Нет пункта «Образование» (п. 1.1)"><button id="brc-addr">＋</button></div>
           <div class="rsb">
             <button class="a no" id="brc-decline"><span>⛔</span>Отказать</button>
             <button class="a wt" id="brc-rework"><span>🛠</span>На доработку 24ч</button>
           </div>
         </div>
 
-        ${fails.length || warns.length ? `<div class="sec"><div class="sh">Замечания</div>${[...fails, ...warns].map(item).join('')}</div>` : ''}
+        <div class="tools">
+          <button class="tb ${state.hl ? 'on' : ''}" id="brc-hl">🔍 ${state.hl ? 'Убрать подсветку' : 'Подсветить в тексте'}</button>
+          ${q ? `<a class="tb" href="https://www.google.com/search?q=${q}" target="_blank">🌐 Google</a>
+                 <a class="tb" href="https://yandex.ru/search/?text=${q}" target="_blank">🌐 Яндекс</a>` : ''}
+        </div>
+        ${state.hl ? `<div class="legend"><mark class="brc-m copy">копипаст-фраза</mark><mark class="brc-m mix">подмена букв</mark><mark class="brc-m caps">капс</mark><mark class="brc-m low">маленькая буква</mark><mark class="brc-m sp">нет пробела</mark><mark class="brc-m sup">сверхъестеств.</mark></div>` : ''}
+
+        ${fails.length || warns.length || loading.length ? `<div class="sec"><div class="sh">Замечания</div>${[...fails, ...warns, ...loading].map(item).join('')}</div>` : ''}
         <div class="sec">
-          <div class="sh" id="brc-okh"><span>Пройдено (${ok.length})</span><span>показать ▾</span></div>
-          <div class="okl" id="brc-okl">${ok.map(item).join('')}</div>
+          <div class="sh" id="brc-okh"><span>Пройдено (${ok.length})</span><span>${state.okOpen ? 'скрыть ▴' : 'показать ▾'}</span></div>
+          <div class="okl ${state.okOpen ? 'open' : ''}">${ok.map(item).join('')}</div>
         </div>
 
-        <button class="send" id="brc-send">📨 Отправить</button>
+        <button class="send" id="brc-send" style="display:${state.send ? 'block' : 'none'}">${state.send}</button>
         <div class="ft">Скрипт кураторов v${VERSION}</div>
       </div>
     </div>`;
 
     if (ls.get('min', false)) box.classList.add('min');
-    qs('.tog', box).onclick = () => { box.classList.toggle('min'); ls.set('min', box.classList.contains('min')); };
+    if (draft) qs('#brc-newr', box).value = draft;
+    bind(fails);
+  }
 
-    qs('#brc-okh').onclick = () => {
-      const l = qs('#brc-okl'); l.classList.toggle('open');
-      qs('#brc-okh span:last-child').textContent = l.classList.contains('open') ? 'скрыть ▴' : 'показать ▾';
+  function bind(fails) {
+    const $ = (id) => qs('#' + id, box);
+    const reasons = () => {
+      const order = [...fails.map((f) => f.r), ...manual, ...getCust()];
+      return order.filter((t, i) => sel.has(t) && order.indexOf(t) === i);
     };
-
-    const reasons = () => [
-      ...[...box.querySelectorAll('input[data-r]:checked')].map((i) => fails[+i.dataset.r].r),
-      ...[...box.querySelectorAll('input[data-m]:checked')].map((i) => manual[+i.dataset.m]),
-    ];
     const mark = (id) => box.querySelectorAll('.acts .a').forEach((b) => b.classList.toggle('on', b.id === id));
 
-    qs('#brc-send').onclick = finish;
-    qs('#brc-no').onclick = () => { qs('#brc-rs').classList.toggle('open'); mark('brc-no'); };
-    qs('#brc-ok').onclick = () => {
+    qs('.tog', box).onclick = () => { box.classList.toggle('min'); ls.set('min', box.classList.contains('min')); };
+    $('brc-okh').onclick = () => { state.okOpen = !state.okOpen; render(); };
+    $('brc-send').onclick = finish;
+
+    box.querySelectorAll('.ck input').forEach((inp) => {
+      inp.onchange = () => (inp.checked ? sel.add(inp.dataset.t) : sel.delete(inp.dataset.t));
+    });
+    box.querySelectorAll('.del').forEach((b) => {
+      b.onclick = (e) => {
+        e.preventDefault();
+        const c = getCust(); const [gone] = c.splice(+b.dataset.del, 1);
+        sel.delete(gone); ls.set(custKey, c); render();
+      };
+    });
+    const add = () => {
+      const v = $('brc-newr').value.trim();
+      if (!v) return;
+      const c = getCust(); if (!c.includes(v)) c.push(v);
+      ls.set(custKey, c); sel.add(v); render(); toast('Причина сохранена');
+    };
+    $('brc-addr').onclick = add;
+    $('brc-newr').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
+
+    $('brc-hl').onclick = () => {
+      const n = toggleHL();
+      render();
+      if (state.hl) { toast(n ? `Подсвечено мест: ${n}` : 'Подозрительных мест не нашёл'); post?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    };
+
+    $('brc-no').onclick = () => { state.rsOpen = !state.rsOpen; render(); };
+    $('brc-ok').onclick = () => {
       mark('brc-ok');
       choose(T.accept(), sec.key === 'org'
         ? { prefix: PREFIX.ACCEPT, close: false, sticky: true } // орга: открыта + закреп (п. 1.2, 2.4)
         : { prefix: PREFIX.ACCEPT, close: true });
     };
-    qs('#brc-wt').onclick = () => { mark('brc-wt'); choose(T.watch(), { prefix: PREFIX.WATCHED, close: false }); };
-    qs('#brc-decline').onclick = () => {
+    $('brc-wt').onclick = () => { mark('brc-wt'); choose(T.watch(), { prefix: PREFIX.WATCHED, close: false }); };
+    $('brc-decline').onclick = () => {
       const rs = reasons();
       if (!rs.length) return toast('Отметь хотя бы одну причину');
       choose(T.decline(rs), { prefix: PREFIX.DECLINE, close: true });
     };
-    qs('#brc-rework').onclick = () => {
+    $('brc-rework').onclick = () => {
       const rs = reasons();
       if (!rs.length) return toast('Отметь, что нужно исправить');
       choose(T.rework(rs), { prefix: PREFIX.WATCHED, close: false });
     };
-  });
+    const rwno = $('brc-rwno');
+    if (rwno) rwno.onclick = () => choose(T.decline([`Тема не была исправлена в течение 24 часов после отправки на доработку (п. ${RULE.rw}).`]), { prefix: PREFIX.DECLINE, close: true });
+  }
+
+  /* ---------- запуск ---------- */
+  (async () => {
+    checks = await runChecks();
+    const LOAD_DUP = { s: 'load', t: 'Ищу другие темы автора…' };
+    const LOAD_COPY = { s: 'load', t: 'Ищу копипаст по форуму…' };
+    if (sec.key !== 'sit') checks.push(LOAD_DUP);
+    checks.push(LOAD_COPY);
+    render();
+
+    const cacheKey = 'c_' + threadId;
+    const cache = ls.get(cacheKey, null);
+    const fresh = cache && Date.now() - cache.ts < 30 * 60e3 && cache.len === text.length;
+    const swap = (from, to) => { const i = checks.indexOf(from); if (i >= 0) { if (to) checks[i] = to; else checks.splice(i, 1); } render(); };
+    const safe = async (fn) => {
+      try { return await fn(); }
+      catch (e) { return { s: 'warn', t: e.message === 'flood' ? 'Форум просит подождать с поиском — обнови страницу через минуту' : 'Поиск не сработал: ' + e.message }; }
+    };
+
+    let dup, copy;
+    if (fresh) { dup = cache.dup; copy = cache.copy; }
+    else {
+      if (sec.key !== 'sit') { dup = await safe(dupCheck); swap(LOAD_DUP, dup); await sleep(2500); }
+      copy = await safe(copyCheck);
+      const okToCache = (x) => !x || !/подождать|не сработал/.test(x.t);
+      if (okToCache(dup) && okToCache(copy)) ls.set(cacheKey, { ts: Date.now(), len: text.length, dup, copy });
+    }
+    if (sec.key !== 'sit') swap(LOAD_DUP, dup);
+    swap(LOAD_COPY, copy);
+  })();
 })();
