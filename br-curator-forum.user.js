@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.4.0
+// @version      5.4.1
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.4.1 — статус обновлений сохраняется между страницами
 // @note         5.4.0 — причины отказа подбираются автоматически и по подозрениям (метка «авто»)
 // @note         5.3.1 — имя вместо ника в заголовке био: предупреждение, а не нарушение; кэш сбрасывается при обновлении
 // @note         5.3.0 — новый дизайн панели проверки: единые иконки, рекомендуемое действие, списки замечаний; вторая одобренная био — предупреждение, а не нарушение
@@ -107,7 +108,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.4.0';
+  const VERSION = '5.4.1';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -630,6 +631,13 @@
       tmEl.textContent = last ? 'Проверено: ' + new Date(last).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
     };
     showTime();
+    // показать последний известный статус, не дожидаясь новой проверки
+    (() => {
+      const rv = ls.get('remote_ver', '');
+      if (!rv) return;
+      if (verCmp(rv, VERSION) > 0) { card.className = 'card new'; stEl.innerHTML = `🔥 Доступна версия <span style="color:#1ec27a">${rv}</span>`; insBtn.style.display = 'flex'; fab.querySelector('.dot').style.display = 'block'; }
+      else { card.className = 'card ok'; stEl.innerHTML = '✅ Установлена последняя версия'; }
+    })();
 
     async function check(manual) {
       if (!UPDATE_URL.startsWith('https://')) { stEl.textContent = '⚠️ Ссылка на обновления не настроена'; return; }
@@ -639,6 +647,7 @@
         const remote = (src.match(/@version\s+([\d.]+)/) || [])[1];
         if (!remote) throw new Error('не нашёл @version');
         ls.set('last_check', Date.now());
+        ls.set('remote_ver', remote);
         showTime();
         if (verCmp(remote, VERSION) > 0) {
           const notes = [...src.matchAll(/\/\/\s*@note\s+(.+)/g)].map((m) => m[1])
