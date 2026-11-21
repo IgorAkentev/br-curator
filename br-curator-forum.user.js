@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.0.2
+// @version      5.1.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.1.0 — шпаргалка правил с поиском, своя подпись в ответах
 // @note         5.0.2 — ID префиксов берутся из формы редактирования темы и подразделов; честная ошибка в очереди
 // @note         5.0.1 — ID префиксов определяются автоматически, видны в меню
 // @note         5.0.0 — кнопка «Следующая тема», счётчик просроченных на иконке, предпросмотр ответа, проверка OOC, контроль отчётов неоф. орг, общие причины команды
@@ -100,7 +101,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.0.2';
+  const VERSION = '5.1.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -117,6 +118,157 @@
 
   for (const id in SECTIONS) SECTIONS[id].id = id;
   const SEC_ORDER = ['2186', '2185', '2183'];
+
+  /* ===================== ШПАРГАЛКА ПРАВИЛ ===================== */
+
+  const RULES = {
+    2186: { name: 'RP-биографии', blocks: [
+      ['Правила составления', [
+        ['1.1', 'Заголовок: Биография | Nick_Name'],
+        ['1.2', 'Реалистично — без сверхспособностей'],
+        ['1.3', 'Запрещено писать биографию существующих людей (Брэд Питт, Аль Капоне и т. д.)'],
+        ['1.4', 'Запрещено копировать чужие биографии'],
+        ['1.5', 'Читабельно, без грамматических и орфографических ошибок'],
+        ['1.6', 'Шрифт Times New Roman или Verdana, размер от 15'],
+        ['1.7', 'Обязательны фото и иные материалы по истории персонажа'],
+        ['1.8', 'Нельзя включать факторы, позволяющие нарушать правила сервера'],
+        ['1.9', 'Объём 200–600 слов'],
+        ['1.10', 'Без логических противоречий (16 лет, но окончил вуз и миллионер)'],
+      ]],
+      ['Форма подачи', [
+        ['', 'Имя и фамилия персонажа · Пол · Возраст · Национальность · Образование · Описание внешности · Характер · Детство · Настоящее время · Итог'],
+      ]],
+      ['Рассмотрение', [
+        ['2.1', 'Срок рассмотрения — 72 часа'],
+        ['2.2', 'Можно оставить на доработку при небольших недочётах, указав что исправить. На исправление 24 часа, иначе отказ'],
+      ]],
+    ] },
+    2185: { name: 'RP-ситуации', blocks: [
+      ['Правила составления', [
+        ['1.1', 'Только внутриигровая информация (без OOC)'],
+        ['1.2', 'Грамотно, с соблюдением орфографии и пунктуации'],
+        ['1.3', 'Правдоподобно, без сверхъестественного'],
+        ['1.4', 'Обязательны скриншоты или видео с места событий'],
+        ['1.5', 'Название: [Краткое название события] Событие — например «[Катастрофа] Взрыв на химическом заводе»'],
+        ['1.6', 'На скринах нет OOC-информации и интерфейса (кроме системно неубираемого)'],
+        ['1.7', 'Деньги и имущество за одобрение не выдаются'],
+        ['1.8', 'В конце — ссылка на исходные материалы с отыгровками'],
+        ['1.9', 'Шрифт Verdana или Times New Roman, размер от 15'],
+        ['1.10', 'Запрещено копировать чужие ситуации'],
+        ['1.11', 'Нельзя нарушать правила форума'],
+      ]],
+      ['Форма подачи', [
+        ['', 'Название · Пролог · Сюжет · Эпилог · Ссылка на исходные материалы с отыгровками'],
+      ]],
+      ['Рассмотрение', [
+        ['2.1', 'Срок — 72 часа'],
+        ['2.2', 'Можно отказать, если противоречит игровой логике и здравому смыслу'],
+        ['2.3', 'При отказе обязательно указать причину'],
+        ['2.4', 'Можно оставить на доработку, указав что исправить. 24 часа, иначе отказ'],
+      ]],
+    ] },
+    2183: { name: 'Неоф. организации', blocks: [
+      ['Критерии', [
+        ['', 'Минимум 3 участника'],
+        ['', 'Чёткий род деятельности и своя история'],
+        ['', 'Грамотно и читабельно'],
+        ['', 'Шрифт Verdana или Times New Roman, размер от 15'],
+        ['', 'У лидера должна быть одобренная RP биография'],
+        ['', 'Отличительная визуальная особенность (например, все носят маску зомби)'],
+      ]],
+      ['Правила', [
+        ['1.1', 'Деятельность не нарушает правила проекта'],
+        ['1.2', 'После одобрения тема открыта, лидер публикует отчёты. Неделя без сообщений лидера — роспуск, тема закрывается'],
+        ['1.3', 'Раз в месяц можно заморозить на 2 недели, предупредив в теме'],
+        ['1.4', 'Нельзя нарушать правила форума в заявке'],
+        ['1.5', 'Нельзя копировать чужие орги и воссоздавать свои распущенные'],
+        ['1.6', 'Нельзя создавать в форме госфракций (например «Росгвардия»)'],
+        ['1.7', 'Администрация не спонсирует организации'],
+        ['1.8', 'Название темы: Неофициальная RP организация [Название]'],
+        ['1.9', 'Название отражает тематику'],
+        ['1.10', 'Заявка с фото или видео; на скринах без OOC и интерфейса'],
+      ]],
+      ['Форма заявки', [
+        ['', 'Название · История создания · Состав участников · Устав · Описание деятельности · Отличительная визуальная особенность · Как и где попасть · Ссылка на одобренную RP биографию'],
+      ]],
+      ['Форма отчёта', [
+        ['', 'Дата события · Краткое описание · Состав участников · Доказательства'],
+      ]],
+      ['Рассмотрение', [
+        ['2.1', 'Срок — 72 часа'],
+        ['2.2', 'Можно отказать, если противоречит игровой логике'],
+        ['2.3', 'При отказе обязательно указать причину'],
+        ['2.4', 'При одобрении тема закрепляется'],
+        ['2.5', 'Доработка: указать что исправить, 24 часа, иначе отказ'],
+        ['2.6', 'Неделя без активности лидера — тема закрывается и переносится (роспуск)'],
+      ]],
+    ] },
+  };
+
+  function openRules(startId) {
+    if (!document.getElementById('brc-rules-css')) {
+      const c = document.createElement('style');
+      c.id = 'brc-rules-css';
+      c.textContent = `
+        #brc-rules{position:fixed;inset:0;z-index:100004;background:#000a;display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px);
+          font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;color:#e6edf0}
+        #brc-rules .md{width:100%;max-width:560px;max-height:88vh;display:flex;flex-direction:column;background:#11181b;border:1px solid #3ec6d055;
+          border-radius:22px 22px 0 0;box-shadow:0 -10px 40px #000c;animation:brcupR .25s}
+        @media(min-width:600px){#brc-rules{align-items:center}#brc-rules .md{border-radius:22px}}
+        @keyframes brcupR{from{transform:translateY(40px);opacity:.5}}
+        #brc-rules .top{padding:16px 16px 10px;border-bottom:1px solid #ffffff12}
+        #brc-rules .h{display:flex;align-items:center;gap:10px}
+        #brc-rules .h b{flex:1;font-size:17px}
+        #brc-rules .x{background:#ffffff14;border:none;color:#e6edf0;width:34px;height:34px;border-radius:10px;font-size:18px;cursor:pointer}
+        #brc-rules .tabs{display:flex;gap:6px;margin-top:12px}
+        #brc-rules .tab{flex:1;padding:8px 4px;border-radius:10px;border:1px solid #ffffff14;background:#ffffff08;color:#8b9aa1;font-weight:700;font-size:12px;cursor:pointer}
+        #brc-rules .tab.on{color:#3ec6d0;border-color:#3ec6d0;background:#3ec6d014}
+        #brc-rules input{width:100%;box-sizing:border-box;margin-top:10px;padding:9px 12px;border-radius:10px;border:1px solid #ffffff22;background:#0b1012;color:#e6edf0;font-size:13px}
+        #brc-rules .bd{overflow:auto;padding:6px 16px 18px}
+        #brc-rules .bl{margin-top:14px;font-size:11px;font-weight:800;letter-spacing:.08em;color:#8b9aa1;text-transform:uppercase}
+        #brc-rules .rl{display:flex;gap:10px;padding:9px 11px;border-radius:10px;background:#ffffff08;margin-top:6px}
+        #brc-rules .n{flex:none;min-width:34px;height:22px;padding:0 6px;border-radius:7px;background:#3ec6d022;color:#3ec6d0;font-weight:800;font-size:12px;display:grid;place-items:center}
+        #brc-rules .n.e{background:#1ec27a22;color:#1ec27a}
+        #brc-rules mark{background:#ffb54755;color:inherit;border-radius:3px}
+        #brc-rules .em{color:#8b9aa1;text-align:center;padding:20px}
+      `;
+      document.head.appendChild(c);
+    }
+    document.getElementById('brc-rules')?.remove();
+    const m = document.createElement('div');
+    m.id = 'brc-rules';
+    let cur = RULES[startId] ? startId : SEC_ORDER[0];
+    m.innerHTML = `<div class="md"><div class="top">
+        <div class="h"><b>📖 Правила разделов</b><button class="x">✕</button></div>
+        <div class="tabs">${SEC_ORDER.map((id) => `<button class="tab" data-id="${id}">${RULES[id].name}</button>`).join('')}</div>
+        <input placeholder="Поиск по правилам: шрифт, фото, 72…">
+      </div><div class="bd"></div></div>`;
+    document.body.appendChild(m);
+    const bd = m.querySelector('.bd'), inp = m.querySelector('input');
+    const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const hl = (t, q) => (q ? esc(t).replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), (x) => `<mark>${x}</mark>`) : esc(t));
+    function draw() {
+      m.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.dataset.id === cur));
+      const q = inp.value.trim().toLowerCase();
+      const html = RULES[cur].blocks.map(([bt, items]) => {
+        const f = items.filter(([n, t]) => !q || (n + ' ' + t).toLowerCase().includes(q));
+        return f.length ? `<div class="bl">${bt}</div>` + f.map(([n, t]) => `<div class="rl"><span class="n ${n ? '' : 'e'}">${n || '•'}</span><span>${hl(t, q)}</span></div>`).join('') : '';
+      }).join('');
+      bd.innerHTML = html || '<div class="em">Ничего не нашёл</div>';
+    }
+    m.querySelectorAll('.tab').forEach((t) => (t.onclick = () => { cur = t.dataset.id; draw(); }));
+    inp.oninput = draw;
+    m.querySelector('.x').onclick = () => m.remove();
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+    draw();
+  }
+
+  // Подпись куратора в ответах
+  const myNick = () => (document.querySelector('.p-navgroup-link--user .p-navgroup-linkText, .p-navgroup-user-linkText')?.textContent || '').trim();
+  const SIG_DEF = 'С уважением, куратор форума {nick}';
+  const signature = () => ls.get('sig_on', false)
+    ? `<br>[RIGHT][I][COLOR=${ls.get('sig_color', 'rgb(139, 154, 161)')}]${ls.get('sig_text', SIG_DEF).replaceAll('{nick}', myNick())}[/COLOR][/I][/RIGHT]` : '';
+
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // Автоопределение ID префиксов: ссылки вида ...?prefix_id=8 с текстом «Одобрено»
@@ -218,7 +370,7 @@
         box-shadow:0 18px 50px #000c;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;color:#e6edf0;
         opacity:0;transform:translateY(10px) scale(.97);transform-origin:bottom left;pointer-events:none;transition:opacity .2s,transform .2s}
       #brc-upd.open{opacity:1;transform:none;pointer-events:auto}
-      #brc-upd .in{border-radius:19px;background:#11181bf5;padding:16px;backdrop-filter:blur(8px)}
+      #brc-upd .in{border-radius:19px;background:#11181b;padding:16px;backdrop-filter:blur(8px)}
       #brc-upd .hd{display:flex;align-items:center;gap:12px}
       #brc-upd .logo{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,#3ec6d0,#1ec27a);flex:none}
       #brc-upd .nm{font-size:16px;font-weight:800;white-space:nowrap}
@@ -254,6 +406,12 @@
       #brc-upd .ql{padding:2px 8px;border-radius:10px;background:#ff5468;color:#fff;font-weight:800;font-size:12px}
       #brc-upd .qs{padding:2px 8px;border-radius:10px;background:#ffb54733;color:#ffb547;font-weight:800;font-size:12px}
       #brc-upd .qe{color:#8b9aa1;font-size:12px}
+      #brc-upd .sigbox{padding:10px 12px;border-radius:12px;background:#ffffff08;margin-bottom:6px}
+      #brc-upd .sigbox input{width:100%;box-sizing:border-box;padding:9px 11px;border-radius:9px;border:1px solid #ffffff22;background:#0b1012;color:#e6edf0;font-size:13px}
+      #brc-upd .sigc{display:flex;gap:8px;margin:10px 0 8px}
+      #brc-upd .sc{width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
+      #brc-upd .sc.on{border-color:#fff;box-shadow:0 0 0 2px #11181b inset}
+      #brc-upd .sigpv{text-align:right;font-style:italic;padding:8px 10px;border-radius:9px;background:#2a3236;margin-bottom:6px;min-height:18px}
       #brc-upd .ft{margin-top:14px;text-align:center;font-size:11px;color:#8b9aa1}
       #brc-upd .ft a{color:#3ec6d0;text-decoration:none;font-weight:700}
     `;
@@ -300,10 +458,20 @@
       <div class="ttl">ПРЕФИКСЫ <button class="rf" id="brc-pfx-rf">↻ найти</button></div>
       <div id="brc-pfx"></div>
 
+      <div class="ttl">ПОДПИСЬ В ОТВЕТАХ</div>
+      <div class="opt ${ls.get('sig_on', false) ? 'on' : ''}" data-k="sig_on" data-d="false"><div class="tx">Добавлять подпись<small>Внизу каждого ответа, справа, курсивом</small></div><div class="sw"></div></div>
+      <div class="sigbox">
+        <input id="brc-sig" maxlength="120" placeholder="${SIG_DEF}">
+        <div class="sigc">${['rgb(139, 154, 161)', 'rgb(62, 198, 208)', 'rgb(30, 194, 122)', 'rgb(255, 181, 71)', 'rgb(166, 107, 255)', 'rgb(255, 84, 104)'].map((c) => `<button class="sc" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
+        <div class="sigpv" id="brc-sigpv"></div>
+        <div class="qe">{nick} заменится на твой ник</div>
+      </div>
+
       <div class="ttl">ИНСТРУМЕНТЫ</div>
       <div class="grid">
         <button class="btn" id="brc-clr">🧹 Сбросить кэш</button>
         <button class="btn" id="brc-cust">🗑 Свои причины</button>
+        <button class="btn" id="brc-rules-b" style="grid-column:1/-1">📖 Правила разделов</button>
       </div>
 
       <div class="ft">Сделано для кураторов форума · <a href="https://github.com/IgorAkentev/br-curator" target="_blank">GitHub</a></div>
@@ -314,6 +482,22 @@
     fab.onclick = (e) => { e.stopPropagation(); setOpen(!pnl.classList.contains('open')); };
     document.addEventListener('click', (e) => { if (!pnl.contains(e.target) && e.target !== fab) setOpen(false); });
 
+    // подпись
+    const sigIn = pnl.querySelector('#brc-sig');
+    const sigPv = pnl.querySelector('#brc-sigpv');
+    sigIn.value = ls.get('sig_text', SIG_DEF);
+    const drawSig = () => {
+      const col = ls.get('sig_color', 'rgb(139, 154, 161)');
+      pnl.querySelectorAll('.sc').forEach((b) => b.classList.toggle('on', b.dataset.c === col));
+      sigPv.style.color = col;
+      sigPv.style.opacity = ls.get('sig_on', false) ? 1 : 0.4;
+      sigPv.textContent = (sigIn.value || SIG_DEF).replaceAll('{nick}', myNick() || 'Ник');
+    };
+    sigIn.oninput = () => { ls.set('sig_text', sigIn.value); drawSig(); };
+    pnl.querySelectorAll('.sc').forEach((b) => (b.onclick = () => { ls.set('sig_color', b.dataset.c); drawSig(); }));
+    drawSig();
+    pnl.querySelector('#brc-rules-b').onclick = () => { setOpen(false); openRules((document.querySelector('.p-breadcrumbs a[href*=".2186/"]') && '2186') || (document.querySelector('.p-breadcrumbs a[href*=".2185/"]') && '2185') || (document.querySelector('.p-breadcrumbs a[href*=".2183/"]') && '2183') || (location.pathname.match(/(\d+)\/?$/) || [])[1]); };
+
     pnl.querySelectorAll('.opt').forEach((o) => {
       o.onclick = () => {
         const v = !o.classList.contains('on');
@@ -321,6 +505,7 @@
         ls.set(o.dataset.k, v);
         if (o.dataset.k === 'min') document.getElementById('brc')?.classList.toggle('min', v);
         if (o.dataset.k === 'q_badge') refreshQueue();
+        if (o.dataset.k === 'sig_on') drawSig();
       };
     });
 
@@ -459,6 +644,7 @@
         background:#11181bf2;border:1px solid #3ec6d055;color:#e6edf0;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 6px 18px #0006}
       #brcq-bar b{font-size:15px}
       #brcq-bar .sp{flex:1}
+      #brcq-bar .rul{background:#ffffff14!important}
       #brcq-bar button{border:none;border-radius:10px;padding:8px 12px;font-weight:800;color:#fff;cursor:pointer;background:linear-gradient(135deg,#3ec6d0,#1ec27a)}
     `;
     document.head.appendChild(st);
@@ -493,17 +679,18 @@
     bar.innerHTML = `<span>📋 В очереди: <b>${data.length}</b></span>
       <span style="color:#ff5468">🔥 Просрочено: <b>${late}</b></span>
       <span style="color:#ffb547">⏳ Меньше суток: <b>${soon}</b></span>
-      <span class="sp"></span><button>⇅ По сроку</button>`;
+      <span class="sp"></span><button class="rul">📖 Правила</button><button class="srt">⇅ По сроку</button>`;
     const first = document.querySelector('.structItem--thread');
     const anchorEl = first.closest('.block') || first.parentElement;
     anchorEl.parentElement.insertBefore(bar, anchorEl);
 
-    bar.querySelector('button').onclick = () => {
+    bar.querySelector('.rul').onclick = () => openRules(m[1]);
+    bar.querySelector('.srt').onclick = () => {
       const parent = data[0]?.it.parentElement;
       if (!parent) return;
       // самые горящие — наверх (закреплённые у XenForo в отдельной группе, их не трогаем)
       [...data].reverse().forEach((d) => { if (d.it.parentElement === parent) parent.prepend(d.it); });
-      bar.querySelector('button').textContent = '✓ Отсортировано';
+      bar.querySelector('.srt').textContent = '✓ Отсортировано';
     };
   })();
 
@@ -824,12 +1011,12 @@
 
   const T = {
     accept: () => `${hello}[CENTER]Требования соблюдены.[/CENTER]<br>[CENTER][COLOR=${G}][B]${sec.what} одобрена.[/B][/COLOR][/CENTER]`
-      + (sec.key === 'org' ? `<br>[CENTER]Тема остаётся открытой — публикуйте отчёты о деятельности по форме. Если в течение недели от лидера не будет сообщений, организация будет считаться распущенной.[/CENTER]` : ''),
-    decline: (rs) => `${hello}[CENTER]Требования не соблюдены:[/CENTER]<br>${list(rs)}[CENTER][COLOR=${R}][B]${sec.what} отказана.[/B][/COLOR][/CENTER]`,
-    rework: (rs) => `${hello}[CENTER]Тема оставлена на доработку. Необходимо исправить:[/CENTER]<br>${list(rs)}[CENTER]На внесение изменений даётся 24 часа. Если тема не будет отредактирована за это время, она будет отказана.[/CENTER]<br>[CENTER][COLOR=${Y}][B]На доработке.[/B][/COLOR][/CENTER]`,
-    dissolve: (days) => `${hello}[CENTER]В течение ${days} дней в теме не было отчётов от лидера о деятельности организации.[/CENTER]<br>[CENTER]Согласно п. 1.2 и 2.6 правил, организация считается распущенной, тема закрывается.[/CENTER]<br>[CENTER][COLOR=${R}][B]Организация распущена.[/B][/COLOR][/CENTER]`,
-    remind: () => `${hello}[CENTER]Напоминаем: лидер обязан публиковать отчёты о деятельности организации по форме. Если в течение недели в теме не будет сообщений от лидера, организация будет считаться распущенной (п. 1.2).[/CENTER]<br>[CENTER][COLOR=${Y}][B]Ожидаем отчёт.[/B][/COLOR][/CENTER]`,
-    watch: () => `${hello}[CENTER]Ваша тема взята на рассмотрение. Ожидайте ответа.[/CENTER]<br>[CENTER][COLOR=${Y}][B]На рассмотрении.[/B][/COLOR][/CENTER]`,
+      + (sec.key === 'org' ? `<br>[CENTER]Тема остаётся открытой — публикуйте отчёты о деятельности по форме. Если в течение недели от лидера не будет сообщений, организация будет считаться распущенной.[/CENTER]` : '') + signature(),
+    decline: (rs) => `${hello}[CENTER]Требования не соблюдены:[/CENTER]<br>${list(rs)}[CENTER][COLOR=${R}][B]${sec.what} отказана.[/B][/COLOR][/CENTER]` + signature(),
+    rework: (rs) => `${hello}[CENTER]Тема оставлена на доработку. Необходимо исправить:[/CENTER]<br>${list(rs)}[CENTER]На внесение изменений даётся 24 часа. Если тема не будет отредактирована за это время, она будет отказана.[/CENTER]<br>[CENTER][COLOR=${Y}][B]На доработке.[/B][/COLOR][/CENTER]` + signature(),
+    dissolve: (days) => `${hello}[CENTER]В течение ${days} дней в теме не было отчётов от лидера о деятельности организации.[/CENTER]<br>[CENTER]Согласно п. 1.2 и 2.6 правил, организация считается распущенной, тема закрывается.[/CENTER]<br>[CENTER][COLOR=${R}][B]Организация распущена.[/B][/COLOR][/CENTER]` + signature(),
+    remind: () => `${hello}[CENTER]Напоминаем: лидер обязан публиковать отчёты о деятельности организации по форме. Если в течение недели в теме не будет сообщений от лидера, организация будет считаться распущенной (п. 1.2).[/CENTER]<br>[CENTER][COLOR=${Y}][B]Ожидаем отчёт.[/B][/COLOR][/CENTER]` + signature(),
+    watch: () => `${hello}[CENTER]Ваша тема взята на рассмотрение. Ожидайте ответа.[/CENTER]<br>[CENTER][COLOR=${Y}][B]На рассмотрении.[/B][/COLOR][/CENTER]` + signature(),
   };
 
   /* ===================== ДЕЙСТВИЯ ===================== */
@@ -1039,6 +1226,7 @@
     let h = raw.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     h = h.replace(/\[LIST\]\s*([\s\S]*?)\[\/LIST\]/gi, (m, b) => '<ul>' + b.split(/\[\*\]/).filter((x) => x.trim()).map((x) => `<li>${x.trim()}</li>`).join('') + '</ul>');
     h = h.replace(/\[CENTER\]([\s\S]*?)\[\/CENTER\]/gi, '<div style="text-align:center">$1</div>')
+      .replace(/\[RIGHT\]([\s\S]*?)\[\/RIGHT\]/gi, '<div style="text-align:right">$1</div>')
       .replace(/\[COLOR=([^\]]+)\]([\s\S]*?)\[\/COLOR\]/gi, '<span style="color:$1">$2</span>')
       .replace(/\[B\]([\s\S]*?)\[\/B\]/gi, '<b>$1</b>')
       .replace(/\[I\]([\s\S]*?)\[\/I\]/gi, '<i>$1</i>')
@@ -1314,6 +1502,7 @@
         <div class="tools">
           <button class="tb ${state.hl ? 'on' : ''}" id="brc-hl">🔍 ${state.hl ? 'Убрать подсветку' : 'Подсветить'}</button>
           <button class="tb" id="brc-next">➡️ Следующая</button>
+          <button class="tb" id="brc-rul">📖 Правила</button>
           ${q ? `<a class="tb" href="https://www.google.com/search?q=${q}" target="_blank">🌐 Google</a>
                  <a class="tb" href="https://yandex.ru/search/?text=${q}" target="_blank">🌐 Яндекс</a>` : ''}
         </div>
@@ -1367,6 +1556,7 @@
     $('brc-newr').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
 
     $('brc-next').onclick = goNext;
+    $('brc-rul').onclick = () => openRules(sec.id);
     $('brc-hl').onclick = () => {
       const n = toggleHL();
       render();
