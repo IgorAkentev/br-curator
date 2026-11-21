@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.5.1
+// @version      5.5.2
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.5.2 — меню выезжает снизу шторкой и не обрезается; шестерёнка меньше и бледнеет при прокрутке
 // @note         5.5.1 — тема: убран серый фон строк разделов, бирюзовые иконки разделов
 // @note         5.5.0 — тема оформления всего форума (вкл/выкл в настройках)
 // @note         5.4.2 — пункты формы ищутся без обязательного двоеточия; ник сравнивается по согласным (Ded_Bomer = Дед Бумер)
@@ -197,7 +198,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.5.1';
+  const VERSION = '5.5.2';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -487,10 +488,12 @@
 
     const st = document.createElement('style');
     st.textContent = `
-      #brc-fab{position:fixed;left:14px;bottom:90px;z-index:100001;width:50px;height:50px;border-radius:16px;border:1px solid #ffffff30;
-        display:grid;place-items:center;padding:0;transition:transform .25s,box-shadow .25s;
+      #brc-fab{position:fixed;left:12px;bottom:96px;z-index:100001;width:42px;height:42px;border-radius:13px;border:1px solid #ffffff30;
+        display:grid;place-items:center;padding:0;transition:transform .25s,box-shadow .25s,opacity .3s;
         background:linear-gradient(135deg,#3ec6d0,#1ec27a);box-shadow:0 6px 18px #1ec27a55;cursor:pointer}
-      #brc-fab svg,#brc-upd .hd svg{width:26px!important;height:26px!important;transition:transform .5s;fill:none!important}
+      #brc-fab svg{width:22px!important;height:22px!important;transition:transform .5s;fill:none!important}
+      #brc-upd .hd svg{width:26px!important;height:26px!important;fill:none!important}
+      #brc-fab.dim{opacity:.28;transform:scale(.88)}
       #brc-fab svg *,#brc-upd .hd svg *{fill:none!important;stroke:#fff!important;stroke-width:2px!important}
       #brc-fab.open svg{transform:rotate(90deg)}
       #brc-fab:active{transform:scale(.92)}
@@ -500,11 +503,16 @@
         font:800 11px/18px -apple-system,Segoe UI,Roboto,sans-serif;border:2px solid #11181b;display:none;box-sizing:border-box}
       @keyframes brcpulse{0%{box-shadow:0 0 0 0 #ff546899}70%{box-shadow:0 0 0 8px #ff546800}100%{box-shadow:0 0 0 0 #ff546800}}
 
-      #brc-upd{position:fixed;left:14px;bottom:150px;z-index:100001;width:310px;max-width:calc(100vw - 28px);max-height:calc(100vh - 170px);overflow:auto;
-        border-radius:20px;padding:1px;background:linear-gradient(135deg,#3ec6d0aa,#1ec27a33 45%,#ffffff12 65%,#3ec6d055);
-        box-shadow:0 18px 50px #000c;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;color:#e6edf0;
-        opacity:0;transform:translateY(10px) scale(.97);transform-origin:bottom left;pointer-events:none;transition:opacity .2s,transform .2s}
+      #brc-upd{position:fixed;left:8px;right:8px;bottom:8px;z-index:100005;max-width:460px;margin:0 auto;
+        max-height:78vh;max-height:78dvh;overflow:auto;overscroll-behavior:contain;
+        border-radius:22px;padding:1px;background:linear-gradient(135deg,#3ec6d0aa,#1ec27a33 45%,#ffffff12 65%,#3ec6d055);
+        box-shadow:0 -10px 50px #000c;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;color:#e6edf0;
+        opacity:0;transform:translateY(30px);pointer-events:none;transition:opacity .2s,transform .25s cubic-bezier(.2,.9,.3,1)}
       #brc-upd.open{opacity:1;transform:none;pointer-events:auto}
+      #brc-upd-bg{position:fixed;inset:0;z-index:100004;background:#0008;backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .2s}
+      #brc-upd-bg.open{opacity:1;pointer-events:auto}
+      #brc-upd .grab{width:40px;height:4px;border-radius:2px;background:#ffffff30;margin:-6px auto 10px}
+      #brc-upd .xx{margin-left:8px;width:32px;height:32px;flex:none;border:none;border-radius:10px;background:#ffffff10;color:#e6edf0;font-size:16px;cursor:pointer}
       #brc-upd .in{border-radius:19px;background:#11181b;padding:16px;backdrop-filter:blur(8px)}
       #brc-upd .hd{display:flex;align-items:center;gap:12px}
       #brc-upd .logo{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,#3ec6d0,#1ec27a);flex:none}
@@ -580,10 +588,12 @@
     const pnl = document.createElement('div');
     pnl.id = 'brc-upd';
     pnl.innerHTML = `<div class="in">
+      <div class="grab"></div>
       <div class="hd">
         <div class="logo">${GEAR}</div>
         <div><div class="nm">Скрипт кураторов</div><div class="sb">Khabarovsk 49</div></div>
         <div class="ver">v${VERSION}</div>
+        <button class="xx" title="Закрыть">✕</button>
       </div>
       <div class="mtabs">${TABS.map(([k, ic, n]) => `<button class="mt" data-t="${k}"><span>${ic}</span>${n}</button>`).join('')}</div>
 
@@ -634,7 +644,19 @@
     showTab(ls.get('menu_tab', 'main'));
     document.body.append(fab, pnl);
 
-    const setOpen = (o) => { pnl.classList.toggle('open', o); fab.classList.toggle('open', o); };
+    const bg = document.createElement('div');
+    bg.id = 'brc-upd-bg';
+    document.body.appendChild(bg);
+    const setOpen = (o) => { pnl.classList.toggle('open', o); bg.classList.toggle('open', o); fab.classList.toggle('open', o); };
+    bg.onclick = () => setOpen(false);
+    pnl.querySelector('.xx').onclick = (e) => { e.stopPropagation(); setOpen(false); };
+    // полупрозрачная шестерёнка, пока листаешь
+    let dimT;
+    window.addEventListener('scroll', () => {
+      fab.classList.add('dim');
+      clearTimeout(dimT);
+      dimT = setTimeout(() => fab.classList.remove('dim'), 900);
+    }, { passive: true });
     fab.onclick = (e) => { e.stopPropagation(); setOpen(!pnl.classList.contains('open')); };
     document.addEventListener('click', (e) => { if (!pnl.contains(e.target) && e.target !== fab) setOpen(false); });
 
