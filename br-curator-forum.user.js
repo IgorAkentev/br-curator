@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      6.0.0
+// @version      6.0.1
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         6.0.1 — пункты формы с опечатками («Настоящие время») засчитываются; причины прошлого отказа читаются и из строк через «•»
 // @note         6.0.0 — «Взять» и кто взял тему, пакетная проверка раздела, галерея доказательств, быстрые ответы в любой теме, свои шаблоны и цвета ответов, экспорт/импорт настроек
 // @note         5.8.0 — окно «Вышло обновление» с кнопками «Обновить» / «Напомнить позже», проверка каждые 30 минут, «что нового» после установки
 // @note         5.7.0 — досье автора, «что исправлено после прошлого отказа», уведомления о новых темах
@@ -158,12 +159,12 @@
         ['Имя и фамилия персонажа', /(имя|фио)[^:\n]{0,30}:/i],
         ['Пол', /(^|\n)\s*пол\s*[:\-–—]|муж(ской|чина)|жен(ский|щина)/i],
         ['Возраст', /возраст/i],
-        ['Национальность', /национальност/i],
-        ['Образование', /образовани/i],
-        ['Описание внешности', /внешност/i],
+        ['Национальность', /нац[иы]ональн/i],
+        ['Образование', /образовани|обучени|учил(ся|ась)/i],
+        ['Описание внешности', /внешн|внешност/i],
         ['Характер', /характер/i],
         ['Детство', /детств/i],
-        ['Настоящее время', /настоящ(ее|ем)\s+врем|в\s+настоящее\s+время|сейчас\s+(он|она|я)\b/i],
+        ['Настоящее время', /настоящ[а-яё]*\s+врем|сейчас\s+(он|она|я)\b/i],
         ['Итог', /итог|в\s+заключени/i],
       ],
       needMedia: true, mediaRule: '1.7',
@@ -210,7 +211,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '6.0.0';
+  const VERSION = '6.0.1';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const GM_NOTES = (() => { try { return ((typeof GM_info !== 'undefined' && GM_info.scriptMetaStr) || '').match(/@note\s+.+/g).map((x) => x.replace(/@note\s+/, '')); } catch { return []; } })();
@@ -1493,9 +1494,11 @@
       const ref = msgs.filter((m) => who(m) && who(m) !== author && /отказ|не соблюден/i.test(m.querySelector('.bbWrapper')?.innerText || m.querySelector('.bbWrapper')?.textContent || '')).pop();
       if (!ref) return { prev, reasons: [] };
       const bb = ref.querySelector('.bbWrapper');
-      let reasons = [...bb.querySelectorAll('li')].map((li) => (li.innerText || li.textContent).trim()).filter(Boolean);
-      if (!reasons.length) reasons = (bb.innerText || bb.textContent).split('\n').map((x) => x.replace(/^[•\-–—*\s]+/, '').trim())
-        .filter((x) => x.length > 12 && !/здравствуйте|приветств|уважением|отказан|не соблюден/i.test(x));
+      bb.querySelectorAll('br').forEach((b) => b.replaceWith('\n'));
+      bb.querySelectorAll('p, div, li').forEach((b) => b.append('\n'));
+      let reasons = [...bb.querySelectorAll('li')].map((li) => li.textContent.trim()).filter(Boolean);
+      if (!reasons.length) reasons = bb.textContent.split(/\n|•|(?=\bПункт\s+\d)/).map((x) => x.replace(/^[•\-–—*\s]+/, '').trim())
+        .filter((x) => x.length > 12 && !/^(здравствуйте|доброго|приветств|с уважением)|^(биография|ситуация|организация|тема)\s+(отказан|одобрен)|^требования\s+не\s+соблюдены:?$|^на доработку|^не исправлено за/i.test(x));
       const t = +(ref.querySelector('time.u-dt')?.getAttribute('data-time') || 0);
       return { prev, by: who(ref), t, reasons: reasons.slice(0, 8) };
     } catch { return { prev, reasons: [] }; }
