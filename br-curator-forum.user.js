@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.4.1
+// @version      5.4.2
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.4.2 — пункты формы ищутся без обязательного двоеточия; ник сравнивается по согласным (Ded_Bomer = Дед Бумер)
 // @note         5.4.1 — статус обновлений сохраняется между страницами
 // @note         5.4.0 — причины отказа подбираются автоматически и по подозрениям (метка «авто»)
 // @note         5.3.1 — имя вместо ника в заголовке био: предупреждение, а не нарушение; кэш сбрасывается при обновлении
@@ -54,15 +55,15 @@
       minWords: 200, maxWords: 600,
       fields: [
         ['Имя и фамилия персонажа', /(имя|фио)[^:\n]{0,30}:/i],
-        ['Пол', /(^|\n)\s*пол\s*:/i],
-        ['Возраст', /возраст\s*:/i],
-        ['Национальность', /национальность\s*:/i],
-        ['Образование', /образование\s*:/i],
+        ['Пол', /(^|\n)\s*пол\s*[:\-–—]|муж(ской|чина)|жен(ский|щина)/i],
+        ['Возраст', /возраст/i],
+        ['Национальность', /национальност/i],
+        ['Образование', /образовани/i],
         ['Описание внешности', /внешност/i],
-        ['Характер', /характер\s*:/i],
-        ['Детство', /детство\s*:/i],
-        ['Настоящее время', /настоящее\s+время\s*:/i],
-        ['Итог', /итог\s*:/i],
+        ['Характер', /характер/i],
+        ['Детство', /детств/i],
+        ['Настоящее время', /настоящ(ее|ем)\s+врем|в\s+настоящее\s+время|сейчас\s+(он|она|я)\b/i],
+        ['Итог', /итог|в\s+заключени/i],
       ],
       needMedia: true, mediaRule: '1.7',
     },
@@ -108,7 +109,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.4.1';
+  const VERSION = '5.4.2';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -992,7 +993,9 @@
         const [n, s] = nick.split('_');
         const TR = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya' };
         const lat = nameLine.toLowerCase().replace(/[а-яё]/g, (c) => TR[c] ?? c).replace(/[^a-z]/g, '');
-        const near = (w) => lat.includes(w.toLowerCase().slice(0, 3));
+        const skel = (x) => x.toLowerCase().replace(/[^a-z]/g, '').replace(/[aeiouy]/g, '').replace(/(.)\1+/g, '$1');
+        const latSk = skel(lat);
+        const near = (w) => lat.includes(w.toLowerCase().slice(0, 3)) || latSk.includes(skel(w).slice(0, 3));
         res.push((nameLine.includes(n) && nameLine.includes(s)) || (near(n) && near(s))
           ? { s: 'ok', t: 'Ник совпадает с именем в анкете' }
           : { s: 'warn', t: `Ник ${nick} ≠ «${nameLine.trim().slice(0, 30)}»` });
