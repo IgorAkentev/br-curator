@@ -8,3 +8,7 @@
 3. Нажми «Установить».
 
 Обновления подтягиваются автоматически, либо через кнопку 🛠 на форуме.
+
+## Скрипт для логов (logs.blackrussia.online)
+Установка: https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-logs.user.js
+Кнопка BRC справа снизу: сводка по игрокам, общие IP, подсветка слова, быстрые периоды, отчёт в буфер.
