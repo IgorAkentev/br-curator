@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.2.2
+// @version      5.3.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.3.0 — новый дизайн панели проверки: единые иконки, рекомендуемое действие, списки замечаний; вторая одобренная био — предупреждение, а не нарушение
 // @note         5.2.2 — компактное меню со вкладками
 // @note         5.2.1 — верные ID префиксов по умолчанию (8/4/2), точные адреса разделов
 // @note         5.2.0 — после вердикта тема переносится в подраздел (Одобренные / Неодобренные / На доработке)
@@ -104,7 +105,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.2.2';
+  const VERSION = '5.3.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -874,8 +875,7 @@
       : /отказ/i.test(x.minor) ? 'dec' : /одобрен/i.test(x.minor) ? 'acc' : 'pend';
     const acc = rows.find((x) => st(x) === 'acc');
     const pend = rows.find((x) => st(x) === 'pend');
-    if (sec.key === 'bio' && acc) return { s: 'fail', t: `Уже есть одобренная био: «${acc.title}»`, link: acc.href,
-      r: `На данный аккаунт уже имеется одобренная RP биография: ${acc.href}` };
+    if (sec.key === 'bio' && acc && !pend) return { s: 'warn', t: `У автора уже есть одобренная био: «${acc.title}» — проверь, не тот ли персонаж`, link: acc.href };
     if (pend) return { s: 'fail', t: `Дубль: ещё одна тема «${pend.title}»`, link: pend.href,
       r: `Тема является дублем — у вас уже есть тема на рассмотрении: ${pend.href}` };
     if (acc) return { s: 'warn', t: `У автора уже есть одобренная организация: «${acc.title}»`, link: acc.href };
@@ -1194,71 +1194,93 @@
 
   const css = document.createElement('style');
   css.textContent = `
-    #brc{--g:#1ec27a;--r:#ff5468;--y:#ffb547;--b:#3ec6d0;--card:#11181bf2;--line:#ffffff14;--txt:#e6edf0;--mut:#8b9aa1;
-      position:relative;margin:14px 0;padding:1px;border-radius:18px;
-      background:linear-gradient(135deg,#3ec6d0aa,#1ec27a33 40%,#ffffff10 60%,#3ec6d055);
-      box-shadow:0 10px 30px #0008;font:14px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;color:var(--txt)}
-    #brc .in{border-radius:17px;background:var(--card);padding:16px;backdrop-filter:blur(6px)}
+    #brc{--g:#22c58b;--r:#ff5c6c;--y:#ffb547;--b:#40c4d3;--card:#12191c;--card2:#182125;--line:#ffffff10;--txt:#e9eff1;--mut:#8796a0;
+      position:relative;margin:16px 0;border-radius:20px;background:var(--card);border:1px solid #ffffff12;
+      box-shadow:0 1px 0 #ffffff08 inset,0 18px 40px -12px #000c;font:14px/1.45 -apple-system,'SF Pro Text',Segoe UI,Roboto,sans-serif;color:var(--txt);overflow:hidden}
+    #brc::before{content:'';position:absolute;inset:0 0 auto 0;height:3px;background:linear-gradient(90deg,var(--accent,#40c4d3),transparent)}
+    #brc svg.i{width:18px;height:18px;flex:none;fill:none!important;stroke:currentColor!important;stroke-width:2!important;stroke-linecap:round;stroke-linejoin:round}
+    #brc svg.i *{fill:none!important;stroke:currentColor!important}
+    #brc .in{padding:16px}
     #brc .hd{display:flex;align-items:center;gap:14px}
-    #brc .ring{position:relative;width:62px;height:62px;flex:none}
+    #brc .ring{position:relative;width:58px;height:58px;flex:none}
     #brc .ring svg{transform:rotate(-90deg)}
-    #brc .ring b{position:absolute;inset:0;display:grid;place-items:center;font-size:15px}
-    #brc .ttl{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
-    #brc .vrd{font-size:17px;font-weight:800;margin-top:2px}
-    #brc .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-    #brc .chip{padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;background:#ffffff0d;border:1px solid var(--line)}
-    #brc .chip.g{color:var(--g)}#brc .chip.y{color:var(--y)}#brc .chip.r{color:var(--r)}#brc .chip.t{color:var(--b)}
-    #brc .chip.late{color:#fff;background:var(--r);border-color:var(--r)}
-    #brc .tog{margin-left:auto;align-self:flex-start;background:none;border:none;color:var(--mut);font-size:18px;cursor:pointer;transition:.2s}
+    #brc .ring svg,#brc .ring svg *{fill:none!important}
+    #brc .ring b{position:absolute;inset:0;display:grid;place-items:center;font-size:15px;font-weight:800;letter-spacing:-.02em}
+    #brc .ttl{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--mut);font-weight:700}
+    #brc .vrd{font-size:18px;font-weight:800;margin-top:1px;letter-spacing:-.01em}
+    #brc .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+    #brc .chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:700;background:#ffffff0a;color:var(--mut)}
+    #brc .chip svg.i{width:13px;height:13px}
+    #brc .chip.g{color:var(--g);background:#22c58b18}#brc .chip.y{color:var(--y);background:#ffb54718}#brc .chip.r{color:var(--r);background:#ff5c6c18}#brc .chip.t{color:var(--b);background:#40c4d318}
+    #brc .chip.late{color:#fff;background:var(--r)}
+    #brc .tog{margin-left:auto;align-self:flex-start;width:32px;height:32px;display:grid;place-items:center;border-radius:10px;background:#ffffff08;border:none;color:var(--mut);cursor:pointer;transition:transform .25s}
     #brc.min .tog{transform:rotate(180deg)}
     #brc.min .body{display:none}
-    #brc .acts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px}
-    #brc .a{border:none;border-radius:12px;padding:11px 6px;font-weight:800;font-size:13px;color:#fff;cursor:pointer;
-      display:flex;flex-direction:column;align-items:center;gap:3px;transition:transform .12s,filter .12s}
-    #brc .a span{font-size:18px}
-    #brc .a:active{transform:scale(.96)}
-    #brc .a.ok{background:linear-gradient(135deg,#1ec27a,#13925a)}
-    #brc .a.no{background:linear-gradient(135deg,#ff5468,#c42c40)}
-    #brc .a.wt{background:linear-gradient(135deg,#ffb547,#d98512);color:#241500}
-    #brc .a[disabled]{filter:grayscale(1) brightness(.55);cursor:not-allowed}
-    #brc .a.on{outline:2px solid #fff6;outline-offset:2px}
+
+    #brc .acts{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:16px}
+    #brc .acts.two{grid-template-columns:1fr 1fr}
+    #brc .a{display:flex;align-items:center;justify-content:center;gap:7px;min-height:46px;padding:10px 8px;border-radius:14px;border:1px solid transparent;
+      font-weight:750;font-size:13.5px;cursor:pointer;transition:transform .12s,background .2s,box-shadow .2s;line-height:1.15;text-align:left}
+    #brc .a span{display:none}
+    #brc .a:active{transform:scale(.97)}
+    #brc .a.ok{color:var(--g);background:#22c58b14;border-color:#22c58b33}
+    #brc .a.no{color:var(--r);background:#ff5c6c14;border-color:#ff5c6c33}
+    #brc .a.wt{color:var(--y);background:#ffb54714;border-color:#ffb54733}
+    #brc .a.rec.ok{color:#04140d;background:linear-gradient(135deg,#2fd89a,#16a874);box-shadow:0 8px 20px -6px #22c58b99;border-color:transparent}
+    #brc .a.rec.no{color:#fff;background:linear-gradient(135deg,#ff6b7a,#e0384b);box-shadow:0 8px 20px -6px #ff5c6c99;border-color:transparent}
+    #brc .a[disabled]{color:#ffffff40;background:#ffffff06;border-color:#ffffff0a;cursor:not-allowed;box-shadow:none}
+    #brc .a.on{box-shadow:0 0 0 2px #ffffff40}
+
+    #brc .tools{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;margin-top:10px;border-radius:14px;background:var(--card2);border:1px solid var(--line);overflow:hidden}
+    #brc .tb{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:9px 2px 8px;border:none;background:none;color:var(--mut)!important;font:650 11px/1.2 -apple-system,'SF Pro Text',Segoe UI,Roboto,sans-serif!important;cursor:pointer;text-decoration:none!important;position:relative}
+    #brc .tb + .tb::before{content:'';position:absolute;left:0;top:22%;bottom:22%;width:1px;background:var(--line)}
+    #brc .tb svg.i{width:19px;height:19px;color:var(--txt)}
+    #brc .tb:active{background:#ffffff08}
+    #brc .tb.on,#brc .tb.on svg.i{color:var(--b)}
+    #brc .legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;font-size:11px}
+
     #brc .sec{margin-top:16px}
-    #brc .sh{font-size:12px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;display:flex;justify-content:space-between;cursor:pointer}
-    #brc .it{display:flex;gap:10px;align-items:flex-start;padding:9px 11px;border-radius:10px;background:#ffffff08;margin-bottom:6px;border-left:3px solid}
-    #brc .it.fail{border-color:var(--r)}#brc .it.warn{border-color:var(--y)}#brc .it.ok{border-color:var(--g)}
-    #brc .ic{width:20px;height:20px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:11px;font-weight:900;color:#000}
-    #brc .fail .ic{background:var(--r)}#brc .warn .ic{background:var(--y)}#brc .ok .ic{background:var(--g)}
+    #brc .sh{font-size:11px;font-weight:800;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin:0 4px 8px;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+    #brc .lst{border-radius:16px;background:var(--card2);border:1px solid var(--line);overflow:hidden}
+    #brc .it{display:flex;gap:12px;align-items:center;padding:11px 12px}
+    #brc .it + .it{border-top:1px solid var(--line)}
+    #brc .ic{width:28px;height:28px;border-radius:9px;flex:none;display:grid;place-items:center}
+    #brc .ic svg.i{width:16px;height:16px}
+    #brc .fail .ic{background:#ff5c6c1f;color:var(--r)}#brc .warn .ic{background:#ffb5471f;color:var(--y)}#brc .ok .ic{background:#22c58b1f;color:var(--g)}#brc .it.load .ic{background:#40c4d31a;color:var(--b)}
+    #brc .it .tx{flex:1;min-width:0}
+    #brc .lnk{flex:none;width:30px;height:30px;display:grid;place-items:center;border-radius:9px;background:#40c4d314;color:var(--b)}
     #brc .okl{display:none}#brc .okl.open{display:block}
-    #brc .rs{display:none;margin-top:14px;padding:12px;border-radius:12px;background:#ff546810;border:1px solid #ff546833}
-    #brc .rs.open{display:block}
-    #brc .rs .sub{font-size:12px;color:var(--mut);margin:10px 0 6px;font-weight:700}
+    #brc .sh .cnt{display:inline-flex;align-items:center;gap:4px;color:var(--b);text-transform:none;letter-spacing:0;font-weight:700}
+
+    #brc .rs{display:none;margin-top:12px;padding:12px;border-radius:16px;background:var(--card2);border:1px solid #ff5c6c33}
+    #brc .rs.open{display:block;animation:brcin .2s}
+    @keyframes brcin{from{opacity:0;transform:translateY(-4px)}}
+    #brc .rs .sub{font-size:11px;color:var(--mut);margin:12px 2px 6px;font-weight:800;letter-spacing:.07em}
     #brc .rs .sub:first-child{margin-top:0}
-    #brc .ck{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:9px;background:#ffffff08;margin-bottom:5px;cursor:pointer}
+    #brc .ck{display:flex;gap:10px;align-items:flex-start;padding:9px 10px;border-radius:11px;margin-bottom:2px;cursor:pointer}
+    #brc .ck:hover{background:#ffffff06}
     #brc .ck input{display:none}
-    #brc .ck i{width:18px;height:18px;border-radius:5px;border:2px solid var(--mut);flex:none;margin-top:1px;display:grid;place-items:center;font-style:normal;font-size:12px}
+    #brc .ck i{width:20px;height:20px;border-radius:6px;border:2px solid #ffffff30;flex:none;margin-top:0;display:grid;place-items:center;font-style:normal;font-size:12px;font-weight:900;transition:.15s}
     #brc .ck input:checked + i{background:var(--r);border-color:var(--r);color:#fff}
     #brc .ck input:checked + i::after{content:'✓'}
-    #brc .rsb{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
-    #brc .send{display:none;width:100%;margin-top:14px;padding:13px;border:none;border-radius:12px;font-weight:800;font-size:15px;color:#fff;
-      background:linear-gradient(135deg,#3ec6d0,#1ec27a);box-shadow:0 6px 18px #1ec27a44;cursor:pointer}
-    #brc .ft{margin-top:12px;font-size:11px;color:var(--mut);text-align:right}
-    #brc .load{display:flex;align-items:center;gap:10px;color:var(--mut)}
-    #brc .sp{width:18px;height:18px;border-radius:50%;border:2px solid #3ec6d055;border-top-color:#3ec6d0;animation:brcsp 0.8s linear infinite}
-    @keyframes brcsp{to{transform:rotate(360deg)}}
-    #brc .bn{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:14px;padding:11px 13px;border-radius:12px;font-weight:600}
-    #brc .bn.r{background:#ff546818;border:1px solid #ff546855}#brc .bn.y{background:#ffb54718;border:1px solid #ffb54755}#brc .bn.t{background:#3ec6d018;border:1px solid #3ec6d055}
-    #brc .bn .a{flex:1 1 100%;flex-direction:row;justify-content:center}
-    #brc .lnk{color:var(--b);font-weight:700;white-space:nowrap}
-    #brc .ic .sp{width:12px;height:12px;border-width:2px}
-    #brc .it.load{border-color:var(--b);opacity:.8}#brc .load .ic{background:transparent}
-    #brc .tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
-    #brc .tb{flex:1;text-align:center;padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:#ffffff0a;color:var(--txt);font-weight:700;font-size:13px;cursor:pointer;text-decoration:none}
-    #brc .tb.on{border-color:var(--b);color:var(--b)}
-    #brc .legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;font-size:11px}
-    #brc .addr{display:flex;gap:6px;margin-top:8px}
-    #brc .addr input{flex:1;min-width:0;padding:8px 10px;border-radius:9px;border:1px solid var(--line);background:#0006;color:var(--txt);font-size:13px}
-    #brc .addr button{width:40px;border:none;border-radius:9px;background:var(--b);color:#012;font-weight:900;font-size:18px;cursor:pointer}
     #brc .ck .del{margin-left:auto;background:none;border:none;color:var(--mut);font-size:18px;line-height:1;cursor:pointer}
+    #brc .addr{display:flex;gap:6px;margin-top:10px}
+    #brc .addr input{flex:1;min-width:0;padding:10px 12px;border-radius:11px;border:1px solid var(--line);background:#0b1013;color:var(--txt);font-size:13px}
+    #brc .addr button{width:42px;border:none;border-radius:11px;background:var(--b);color:#062326;cursor:pointer;display:grid;place-items:center}
+    #brc .rsb{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+
+    #brc .bn{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:14px;padding:12px 14px;border-radius:14px;font-weight:600}
+    #brc .bn > div{display:flex;gap:8px;align-items:center;flex:1}
+    #brc .bn.r{background:#ff5c6c14;color:#ffc2c8;border:1px solid #ff5c6c33}#brc .bn.y{background:#ffb54714;color:#ffe0ad;border:1px solid #ffb54733}#brc .bn.t{background:#40c4d314;color:#bdeff5;border:1px solid #40c4d333}
+    #brc .bn .a{flex:1 1 100%}
+
+    #brc .send{display:none;width:100%;margin-top:14px;padding:14px;border:none;border-radius:14px;font-weight:800;font-size:15px;color:#fff;
+      background:linear-gradient(135deg,#40c4d3,#22c58b);box-shadow:0 10px 24px -8px #22c58baa;cursor:pointer}
+    #brc .ft{margin-top:14px;font-size:11px;color:#ffffff38;text-align:center}
+    #brc .load{display:flex;align-items:center;gap:10px;color:var(--mut)}
+    #brc .sp{width:16px;height:16px;border-radius:50%;border:2px solid #40c4d340;border-top-color:#40c4d3;animation:brcsp .8s linear infinite;display:inline-block}
+    @keyframes brcsp{to{transform:rotate(360deg)}}
+
     mark.brc-m{color:inherit;border-radius:3px;padding:0 1px}
     mark.brc-m.copy{background:#a66bff55;outline:1px solid #a66bff}
     mark.brc-m.mix{background:#ff546866;outline:1px solid #ff5468}
@@ -1289,7 +1311,6 @@
     #brc-pv .bt{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
     #brc-pv .bt button{padding:13px;border:none;border-radius:12px;font-weight:800;font-size:14px;cursor:pointer;color:#e6edf0;background:#ffffff12}
     #brc-pv .bt .go{grid-column:1/-1;background:linear-gradient(135deg,#3ec6d0,#1ec27a);color:#fff;box-shadow:0 6px 18px #1ec27a44}
-    #brc .acts.two{grid-template-columns:1fr 1fr}
     #brc-toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%) translateY(20px);opacity:0;transition:.25s;
       background:#11181bf2;color:#e6edf0;border:1px solid #3ec6d066;padding:10px 16px;border-radius:12px;z-index:100002;
       box-shadow:0 8px 24px #000a;font:600 13px -apple-system,Segoe UI,Roboto,sans-serif;pointer-events:none}
@@ -1297,9 +1318,32 @@
   `;
   document.head.appendChild(css);
 
+  const ICONS = {
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    x: '<path d="M18 6 6 18M6 6l12 12"/>',
+    alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
+    clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    hour: '<path d="M5 22h14M5 2h14M17 22v-4.2a2 2 0 0 0-.6-1.4L12 12l-4.4 4.4A2 2 0 0 0 7 17.8V22M7 2v4.2a2 2 0 0 0 .6 1.4L12 12l4.4-4.4A2 2 0 0 0 17 6.2V2"/>',
+    ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
+    search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    next: '<path d="M5 12h14M12 5l7 7-7 7"/>',
+    book: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>',
+    globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/>',
+    folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/>',
+    wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z"/>',
+    ext: '<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    down: '<path d="m6 9 6 6 6-6"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    mega: '<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+    snow: '<path d="M12 2v20M2 12h20M5 5l14 14M19 5 5 19"/>',
+    edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  };
+  const I = (n) => `<svg class="i" viewBox="0 0 24 24">${ICONS[n] || ''}</svg>`;
+
   const box = document.createElement('div');
   box.id = 'brc';
-  box.innerHTML = `<div class="in"><div class="load"><div class="sp"></div>Проверяю тему…</div></div>`;
+  box.innerHTML = `<div class="in"><div class="load"><i class="sp"></i>Проверяю тему…</div></div>`;
   const quick = qs('.js-quickReply');
   if (quick) quick.after(box);
   else (qs('.block--messages') || document.body).after(box);
@@ -1377,7 +1421,7 @@
   const orgApproved = sec.key === 'org' && /одобрен/i.test(qs('.p-title-value .label')?.textContent || '');
 
   async function orgControl() {
-    box.innerHTML = `<div class="in"><div class="load"><div class="sp"></div>Смотрю отчёты организации…</div></div>`;
+    box.innerHTML = `<div class="in"><div class="load"><i class="sp"></i>Смотрю отчёты организации…</div></div>`;
     let d = document;
     try { d = parseDoc(await (await fetch(threadBase + 'page-9999', { credentials: 'same-origin' })).text()); } catch {}
     const firstId = firstMsg?.getAttribute('data-content');
@@ -1409,31 +1453,32 @@
 
     const col = dead ? 'var(--r)' : frozen ? 'var(--b)' : days >= 5 ? 'var(--y)' : 'var(--g)';
     const verdict = dead ? `Нет отчётов ${days} дн` : frozen ? `Заморожена ещё ${frozenLeft} дн` : lastT ? 'Организация активна' : 'Отчётов пока нет';
-    const item = (c) => `<div class="it ${c.s}"><div class="ic">${{ ok: '✓', warn: '!', fail: '✕' }[c.s]}</div><div>${esc2(c.t)}</div></div>`;
+    const item = (c) => `<div class="it ${c.s}"><div class="ic">${I({ ok: 'check', warn: 'alert', fail: 'x' }[c.s])}</div><div class="tx">${esc2(c.t)}</div></div>`;
+    box.style.setProperty('--accent', dead ? '#ff5c6c' : frozen ? '#40c4d3' : days >= 5 ? '#ffb547' : '#22c58b');
 
     box.innerHTML = `<div class="in">
       <div class="hd">
-        <div class="ring" style="display:grid;place-items:center;border-radius:50%;border:6px solid ${col}"><b style="color:${col};position:static;font-size:13px;text-align:center;line-height:1.1">${frozen ? '❄️' : days + '<br>дн'}</b></div>
+        <div class="ring" style="display:grid;place-items:center;border-radius:50%;border:5px solid ${col}"><b style="color:${col};position:static;font-size:13px;text-align:center;line-height:1.1">${frozen ? I('snow') : days + '<br>дн'}</b></div>
         <div>
           <div class="ttl">Контроль организации</div>
           <div class="vrd" style="color:${col}">${verdict}</div>
           <div class="chips">
-            <span class="chip t">👤 лидер ${esc2(author)}</span>
-            <span class="chip ${dead ? 'r' : 'g'}">⏱ ${lastT ? `последний отчёт ${days} дн назад` : 'отчётов не было'}</span>
-            ${frozen ? `<span class="chip t">❄️ заморозка до ${new Date((fr + 14 * 86400) * 1000).toLocaleDateString('ru-RU')}</span>` : ''}
+            <span class="chip t">${I('user')}${esc2(author)}</span>
+            <span class="chip ${dead ? 'r' : 'g'}">${I('clock')}${lastT ? `отчёт ${days} дн назад` : 'отчётов не было'}</span>
+            ${frozen ? `<span class="chip t">${I('snow')}до ${new Date((fr + 14 * 86400) * 1000).toLocaleDateString('ru-RU')}</span>` : ''}
           </div>
         </div>
-        <button class="tog" title="Свернуть">▾</button>
+        <button class="tog" title="Свернуть">${I('down')}</button>
       </div>
       <div class="body">
-        ${dead ? `<div class="bn r"><div>💤 <b>Неделя без отчётов</b> — по п. 1.2 и 2.6 организацию можно распускать.</div></div>` : ''}
+        ${dead ? `<div class="bn r"><div>${I('clock')}<span><b>Неделя без отчётов</b> — по п. 1.2 и 2.6 можно распускать</span></div></div>` : ''}
         <div class="acts two">
-          <button class="a no" id="brc-diss" ${dead ? '' : 'disabled title="Ещё не прошло 7 дней"'}><span>⛔</span>Распустить</button>
-          <button class="a wt" id="brc-rem"><span>📣</span>Напомнить</button>
+          <button class="a no ${dead ? 'rec' : ''}" id="brc-diss" ${dead ? '' : 'disabled title="Ещё не прошло 7 дней"'}>${I('ban')}Распустить</button>
+          <button class="a wt" id="brc-rem">${I('mega')}Напомнить</button>
         </div>
-        <div class="sec"><div class="sh">Последние отчёты лидера</div>${reports.length ? reports.map(item).join('') : '<div class="it warn"><div class="ic">!</div><div>На последней странице темы нет сообщений от лидера</div></div>'}</div>
+        <div class="sec"><div class="sh">Последние отчёты лидера</div><div class="lst">${reports.length ? reports.map(item).join('') : `<div class="it warn"><div class="ic">${I('alert')}</div><div class="tx">На последней странице темы нет сообщений от лидера</div></div>`}</div></div>
         <button class="send" id="brc-send" style="display:none"></button>
-        <div class="ft">Скрипт кураторов v${VERSION} · заморозка: 2 недели раз в месяц (п. 1.3)</div>
+        <div class="ft">Скрипт кураторов · v${VERSION} · заморозка 2 нед. раз в месяц (п. 1.3)</div>
       </div></div>`;
     if (ls.get('min', false)) box.classList.add('min');
     qs('.tog', box).onclick = () => { box.classList.toggle('min'); ls.set('min', box.classList.contains('min')); };
@@ -1537,48 +1582,52 @@
     const doneSt = /отказ/i.test(statusTxt) ? 'Отказано' : /одобрен/i.test(statusTxt) ? 'Одобрено' : '';
     const posted = doneSt ? null : qs('time.u-dt', firstMsg)?.getAttribute('data-time');
     const hours = posted ? Math.floor((Date.now() / 1000 - +posted) / 3600) : null;
-    const timer = doneSt ? `<span class="chip ${doneSt === 'Одобрено' ? 'g' : 'r'}">📁 Уже рассмотрена: ${doneSt}</span>` : hours == null ? '' : hours >= 72
-      ? `<span class="chip late">⏱ просрочено (${hours} ч)</span>`
-      : `<span class="chip t">⏱ осталось ${72 - hours} ч</span>`;
+    const timer = doneSt ? `<span class="chip ${doneSt === 'Одобрено' ? 'g' : 'r'}">${I('folder')}${doneSt}</span>` : hours == null ? '' : hours >= 72
+      ? `<span class="chip late">${I('clock')}просрочено · ${hours} ч</span>`
+      : `<span class="chip t">${I('clock')}${72 - hours} ч</span>`;
 
-    const item = (c) => `<div class="it ${c.s}"><div class="ic">${c.s === 'load' ? '<i class="sp"></i>' : { ok: '✓', warn: '!', fail: '✕' }[c.s]}</div>
-      <div>${esc2(c.t)}${c.link ? ` <a class="lnk" href="${esc2(c.link)}" target="_blank">открыть ↗</a>` : ''}</div></div>`;
+    const icon = (st) => (st === 'load' ? '<i class="sp"></i>' : I({ ok: 'check', warn: 'alert', fail: 'x' }[st]));
+    const item = (c) => `<div class="it ${c.s}"><div class="ic">${icon(c.s)}</div><div class="tx">${esc2(c.t)}</div>${
+      c.link ? `<a class="lnk" href="${esc2(c.link)}" target="_blank" title="Открыть">${I('ext')}</a>` : ''}</div>`;
     const ck = (txt, del) => `<label class="ck"><input type="checkbox" data-t="${esc2(txt)}" ${sel.has(txt) ? 'checked' : ''}><i></i><span>${esc2(txt)}</span>${
       del != null ? `<button class="del" data-del="${del}" title="Удалить">×</button>` : ''}</label>`;
 
     let banner = '';
-    if (rw && !rw.fixed && rw.left <= 0) banner = `<div class="bn r"><div>⏰ <b>24 ч на доработку вышли</b> — автор ничего не исправил.</div>
-      <button class="a no" id="brc-rwno"><span>⛔</span>Отказать: не исправлено</button></div>`;
-    else if (rw && !rw.fixed) banner = `<div class="bn y">🛠 Тема на доработке — у автора осталось <b>${rw.left} ч</b>.</div>`;
-    else if (rw && rw.fixed) banner = `<div class="bn t">✏️ Автор ${rw.edited ? 'отредактировал тему' : 'ответил'} после доработки — перепроверь.</div>`;
+    if (rw && !rw.fixed && rw.left <= 0) banner = `<div class="bn r"><div>${I('clock')}<span><b>24 ч на доработку вышли</b> — автор ничего не исправил</span></div>
+      <button class="a no rec" id="brc-rwno">${I('ban')}Отказать: не исправлено</button></div>`;
+    else if (rw && !rw.fixed) banner = `<div class="bn y"><div>${I('wrench')}<span>На доработке — у автора осталось <b>${rw.left} ч</b></span></div></div>`;
+    else if (rw && rw.fixed) banner = `<div class="bn t"><div>${I('edit')}<span>Автор ${rw.edited ? 'отредактировал тему' : 'ответил'} после доработки — перепроверь</span></div></div>`;
 
     const q = copyPhrases[0] ? encodeURIComponent(`"${copyPhrases[0]}"`) : '';
     const cust = getCust();
+    const recOk = !fails.length && !loading.length && !doneSt;
+    const recNo = fails.length && !doneSt;
+    box.style.setProperty('--accent', fails.length ? '#ff5c6c' : warns.length ? '#ffb547' : '#22c58b');
 
     box.innerHTML = `<div class="in">
       <div class="hd">
         <div class="ring">
-          <svg width="62" height="62"><circle cx="31" cy="31" r="${RR}" stroke="#ffffff14" stroke-width="6" fill="none"/>
-            <circle cx="31" cy="31" r="${RR}" stroke="${col}" stroke-width="6" fill="none" stroke-linecap="round"
+          <svg width="58" height="58"><circle cx="29" cy="29" r="${RR}" stroke="#ffffff10" stroke-width="5" fill="none"/>
+            <circle cx="29" cy="29" r="${RR}" stroke="${col}" stroke-width="5" fill="none" stroke-linecap="round"
               stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}" style="transition:stroke-dashoffset .8s"/></svg>
           <b style="color:${col}">${pct}%</b>
         </div>
-        <div>
-          <div class="ttl">Автопроверка · ${sec.name}</div>
+        <div style="min-width:0">
+          <div class="ttl">${sec.name} · автопроверка</div>
           <div class="vrd" style="color:${col}">${verdict}</div>
           <div class="chips">
-            <span class="chip g">✓ ${ok.length}</span><span class="chip y">⚠ ${warns.length}</span><span class="chip r">✕ ${fails.length}</span>${timer}
+            <span class="chip g">${I('check')}${ok.length}</span><span class="chip y">${I('alert')}${warns.length}</span><span class="chip r">${I('x')}${fails.length}</span>${timer}
           </div>
         </div>
-        <button class="tog" title="Свернуть">▾</button>
+        <button class="tog" title="Свернуть">${I('down')}</button>
       </div>
 
       <div class="body">
         ${banner}
         <div class="acts">
-          <button class="a ok" id="brc-ok" ${fails.length ? 'disabled title="Есть нарушения"' : ''}><span>✅</span>Одобрить</button>
-          <button class="a no ${state.rsOpen ? 'on' : ''}" id="brc-no"><span>⛔</span>Отказ / доработка</button>
-          <button class="a wt" id="brc-wt"><span>⏳</span>На рассмотрение</button>
+          <button class="a ok ${recOk ? 'rec' : ''}" id="brc-ok" ${fails.length ? 'disabled title="Есть нарушения"' : ''}>${I('check')}Одобрить</button>
+          <button class="a no ${recNo ? 'rec' : ''} ${state.rsOpen ? 'on' : ''}" id="brc-no">${I('ban')}Отказ</button>
+          <button class="a wt" id="brc-wt">${I('hour')}Рассмотр.</button>
         </div>
 
         <div class="rs ${state.rsOpen ? 'open' : ''}" id="brc-rs">
@@ -1587,30 +1636,30 @@
           ${manual.map((m) => ck(m)).join('')}
           ${getShared().length ? '<div class="sub">ОБЩИЕ ПРИЧИНЫ КОМАНДЫ</div>' + getShared().map((m) => ck(m)).join('') : ''}
           ${cust.length ? '<div class="sub">ТВОИ ПРИЧИНЫ</div>' + cust.map((c, i) => ck(c, i)).join('') : ''}
-          <div class="addr"><input id="brc-newr" placeholder="Своя причина, например: Нет пункта «Образование» (п. 1.1)"><button id="brc-addr">＋</button></div>
+          <div class="addr"><input id="brc-newr" placeholder="Своя причина…"><button id="brc-addr" title="Добавить">${I('plus')}</button></div>
           <div class="rsb">
-            <button class="a no" id="brc-decline"><span>⛔</span>Отказать</button>
-            <button class="a wt" id="brc-rework"><span>🛠</span>На доработку 24ч</button>
+            <button class="a no rec" id="brc-decline">${I('ban')}Отказать</button>
+            <button class="a wt" id="brc-rework">${I('wrench')}Доработка 24 ч</button>
           </div>
         </div>
 
         <div class="tools">
-          <button class="tb ${state.hl ? 'on' : ''}" id="brc-hl">🔍 ${state.hl ? 'Убрать подсветку' : 'Подсветить'}</button>
-          <button class="tb" id="brc-next">➡️ Следующая</button>
-          <button class="tb" id="brc-rul">📖 Правила</button>
-          ${q ? `<a class="tb" href="https://www.google.com/search?q=${q}" target="_blank">🌐 Google</a>
-                 <a class="tb" href="https://yandex.ru/search/?text=${q}" target="_blank">🌐 Яндекс</a>` : ''}
+          <button class="tb ${state.hl ? 'on' : ''}" id="brc-hl">${I('search')}${state.hl ? 'Убрать' : 'Подсветка'}</button>
+          <button class="tb" id="brc-next">${I('next')}Следующая</button>
+          <button class="tb" id="brc-rul">${I('book')}Правила</button>
+          ${q ? `<a class="tb" href="https://www.google.com/search?q=${q}" target="_blank">${I('globe')}Google</a>
+                 <a class="tb" href="https://yandex.ru/search/?text=${q}" target="_blank">${I('globe')}Яндекс</a>` : ''}
         </div>
         ${state.hl ? `<div class="legend"><mark class="brc-m copy">копипаст-фраза</mark><mark class="brc-m mix">подмена букв</mark><mark class="brc-m caps">капс</mark><mark class="brc-m low">маленькая буква</mark><mark class="brc-m sp">нет пробела</mark><mark class="brc-m sup">сверхъестеств.</mark><mark class="brc-m ooc">OOC</mark></div>` : ''}
 
-        ${fails.length || warns.length || loading.length ? `<div class="sec"><div class="sh">Замечания</div>${[...fails, ...warns, ...loading].map(item).join('')}</div>` : ''}
+        ${fails.length || warns.length || loading.length ? `<div class="sec"><div class="sh">Замечания</div><div class="lst">${[...fails, ...warns, ...loading].map(item).join('')}</div></div>` : ''}
         <div class="sec">
-          <div class="sh" id="brc-okh"><span>Пройдено (${ok.length})</span><span>${state.okOpen ? 'скрыть ▴' : 'показать ▾'}</span></div>
-          <div class="okl ${state.okOpen ? 'open' : ''}">${ok.map(item).join('')}</div>
+          <div class="sh" id="brc-okh"><span>Пройдено · ${ok.length}</span><span class="cnt">${state.okOpen ? 'скрыть' : 'показать'}</span></div>
+          <div class="okl ${state.okOpen ? 'open' : ''}"><div class="lst">${ok.map(item).join('')}</div></div>
         </div>
 
         <button class="send" id="brc-send" style="display:${state.send ? 'block' : 'none'}">${state.send}</button>
-        <div class="ft">Скрипт кураторов v${VERSION}</div>
+        <div class="ft">Скрипт кураторов · v${VERSION}</div>
       </div>
     </div>`;
 
