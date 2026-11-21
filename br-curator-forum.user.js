@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      4.0.1
+// @version      4.0.2
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         4.0.2 — фото по ссылке текстом засчитываются, фикс иконки
 // @note         4.0.1 — новая иконка настроек, фикс дублей и таймера на рассмотренных темах
 // @note         4.0.0 — поиск копипаста и дублей, очередь с таймерами в разделах, контроль доработки 24ч, свои причины, подсветка в тексте
 // @note         3.2.0 — новый дизайн панели, починены ложные срабатывания (заголовок, имя, фото)
@@ -91,7 +92,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '4.0.1';
+  const VERSION = '4.0.2';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -112,7 +113,8 @@
       #brc-fab{position:fixed;left:14px;bottom:90px;z-index:100001;width:50px;height:50px;border-radius:16px;border:1px solid #ffffff30;
         display:grid;place-items:center;padding:0;transition:transform .25s,box-shadow .25s;
         background:linear-gradient(135deg,#3ec6d0,#1ec27a);color:#fff;font-size:20px;box-shadow:0 6px 18px #1ec27a55;cursor:pointer}
-      #brc-fab svg{width:26px;height:26px;transition:transform .5s}
+      #brc-fab svg{width:26px!important;height:26px!important;transition:transform .5s;fill:none!important}
+      #brc-fab svg *{fill:none!important;stroke:#fff!important;stroke-width:2px!important}
       #brc-fab.open svg{transform:rotate(90deg)}
       #brc-fab:active{transform:scale(.92)}
       #brc-fab .dot{position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:#ff5468;border:2px solid #11181b;display:none;
@@ -433,14 +435,21 @@
 
     // Фото / видео
     if (sec.needMedia) {
-      const media = firstMsg ? firstMsg.querySelectorAll('.message-body img:not(.smilie), .message-attachments img, .message-attachments a.file-preview, .bbMediaWrapper, .bbMediaJustifier, iframe, video, a[href*="imgur"], a[href*="yapx"], a[href*="youtu"], a[href*="rutube"], a[href*="vk.com/video"], a[href*="disk.yandex"], a[href*="imgbb"], a[href*="postimg"]').length : 0;
-      res.push(media ? { s: 'ok', t: `Фото/видео: ${media}` }
+      const embeds = firstMsg ? firstMsg.querySelectorAll('.message-body img:not(.smilie), .message-attachments img, .message-attachments a.file-preview, .bbMediaWrapper, .bbMediaJustifier, iframe, video').length : 0;
+      // ссылки: и кликабельные, и просто текстом (https://radikal.host/...)
+      const urls = new Set([
+        ...(post ? [...post.querySelectorAll('a[href^="http"]')].map((a) => a.href) : []),
+        ...(text.match(/https?:\/\/[^\s<>"']+/gi) || []),
+      ].filter((u) => !/forum\.blackrussia\.online/i.test(u)));
+      const total = embeds + urls.size;
+      res.push(total ? { s: 'ok', t: `Фото/видео: ${embeds ? embeds + ' вставлено' : ''}${embeds && urls.size ? ', ' : ''}${urls.size ? urls.size + ' по ссылке' : ''}` }
         : { s: 'fail', t: 'Нет фото/видео', r: `Отсутствуют фото- или видеоматериалы (п. ${sec.mediaRule}).` });
     }
 
     // Ссылка на исходники (ситуации)
     if (sec.needSourceLink) {
-      const links = post ? [...post.querySelectorAll('a[href]')].filter((a) => !a.href.includes('forum.blackrussia.online/members')).length : 0;
+      const links = (post ? [...post.querySelectorAll('a[href]')].filter((a) => !a.href.includes('forum.blackrussia.online/members')).length : 0)
+        + (text.match(/https?:\/\/[^\s<>"']+/gi) || []).length;
       res.push(links ? { s: 'ok', t: 'Есть ссылка на исходники' }
         : { s: 'fail', t: 'Нет ссылки на исходники', r: 'Не предоставлена ссылка на исходные материалы с RP отыгровками (п. 1.8).' });
     }
