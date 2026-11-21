@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      6.0.1
+// @version      6.1.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         6.1.0 — настоящая проверка орфографии (LanguageTool) с подсветкой ошибок; «Мой журнал» разобранных тем
 // @note         6.0.1 — пункты формы с опечатками («Настоящие время») засчитываются; причины прошлого отказа читаются и из строк через «•»
 // @note         6.0.0 — «Взять» и кто взял тему, пакетная проверка раздела, галерея доказательств, быстрые ответы в любой теме, свои шаблоны и цвета ответов, экспорт/импорт настроек
 // @note         5.8.0 — окно «Вышло обновление» с кнопками «Обновить» / «Напомнить позже», проверка каждые 30 минут, «что нового» после установки
@@ -211,7 +212,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '6.0.1';
+  const VERSION = '6.1.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const GM_NOTES = (() => { try { return ((typeof GM_info !== 'undefined' && GM_info.scriptMetaStr) || '').match(/@note\s+.+/g).map((x) => x.replace(/@note\s+/, '')); } catch { return []; } })();
@@ -373,6 +374,77 @@
     m.onclick = (e) => { if (e.target === m) m.remove(); };
     draw();
   }
+
+  /* ===================== МОЙ ЖУРНАЛ ===================== */
+  const ACT = { acc: ['✅', 'Одобрено', '#22c58b'], dec: ['⛔', 'Отказано', '#ff5c6c'], rw: ['🛠', 'На доработку', '#ffb547'], take: ['🙋', 'Взято', '#40c4d3'], diss: ['📦', 'Распущена орга', '#ff5c6c'], rem: ['📣', 'Напоминание орге', '#ffb547'], other: ['•', 'Действие', '#8796a0'] };
+  const SEC_NAME = { bio: 'Био', sit: 'Ситуация', org: 'Орга' };
+  function journalStats() {
+    const j = ls.get('journal', []);
+    const day0 = new Date(); day0.setHours(0, 0, 0, 0);
+    const week0 = Date.now() - 7 * 864e5;
+    const cnt = (from) => { const o = {}; j.filter((x) => x.t >= from).forEach((x) => (o[x.act] = (o[x.act] || 0) + 1)); return o; };
+    return { j, today: cnt(+day0), week: cnt(week0) };
+  }
+  function openJournal() {
+    document.getElementById('brc-jr')?.remove();
+    const { j, today, week } = journalStats();
+    const esc = (x) => String(x).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+    const sum = (o) => ['acc', 'dec', 'rw', 'take'].map((k) => `<span class="jc" style="color:${ACT[k][2]}">${ACT[k][0]} ${o[k] || 0}</span>`).join('');
+    const days = {};
+    j.forEach((x) => { const d = new Date(x.t).toLocaleDateString('ru-RU', { weekday: 'short', day: '2-digit', month: '2-digit' }); (days[d] = days[d] || []).push(x); });
+    const m = document.createElement('div');
+    m.id = 'brc-jr';
+    m.innerHTML = `<div class="jbg"></div><div class="jm">
+      <div class="jh"><b>📒 Мой журнал</b><button class="x">✕</button></div>
+      <div class="js"><div><small>Сегодня</small>${sum(today)}</div><div><small>За 7 дней</small>${sum(week)}</div></div>
+      <div class="jf">${['all', 'acc', 'dec', 'rw', 'take'].map((k, i) => `<button data-f="${k}" class="${i ? '' : 'on'}">${k === 'all' ? 'Все' : ACT[k][0] + ' ' + ACT[k][1]}</button>`).join('')}</div>
+      <div class="jl">${j.length ? Object.entries(days).map(([d, xs]) => `<div class="jd">${d}</div>` + xs.map((x) =>
+        `<a class="ji" data-a="${x.act}" href="${esc(x.href)}"><span class="je">${(ACT[x.act] || ACT.other)[0]}</span><span class="jt"><b>${esc(x.title || 'тема')}</b>
+          <small>${SEC_NAME[x.sec] || ''} · ${esc(x.who || '')} · ${new Date(x.t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</small></span></a>`).join('')).join('')
+        : '<div class="jz">Пока пусто — журнал заполняется, когда ты отправляешь ответы через панель скрипта.</div>'}</div>
+      ${j.length ? '<button class="jclr">Очистить журнал</button>' : ''}
+    </div>`;
+    document.body.appendChild(m);
+    const close = () => m.remove();
+    m.querySelector('.jbg').onclick = close;
+    m.querySelector('.x').onclick = close;
+    m.querySelectorAll('.jf button').forEach((b) => (b.onclick = () => {
+      m.querySelectorAll('.jf button').forEach((x) => x.classList.toggle('on', x === b));
+      m.querySelectorAll('.ji').forEach((it) => (it.style.display = b.dataset.f === 'all' || it.dataset.a === b.dataset.f ? '' : 'none'));
+    }));
+    const clr = m.querySelector('.jclr');
+    if (clr) clr.onclick = () => { if (confirm('Очистить весь журнал?')) { ls.set('journal', []); close(); } };
+  }
+  (function journalCss() {
+    const c = document.createElement('style');
+    c.textContent = `
+      #brc-jr{position:fixed;inset:0;z-index:100006;font:14px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;color:#e6edf0}
+      #brc-jr .jbg{position:absolute;inset:0;background:#000a;backdrop-filter:blur(3px)}
+      #brc-jr .jm{position:absolute;left:8px;right:8px;bottom:8px;max-width:480px;margin:0 auto;max-height:86vh;max-height:86dvh;display:flex;flex-direction:column;
+        background:#11181b;border:1px solid #40c4d355;border-radius:22px;box-shadow:0 -10px 50px #000c;overflow:hidden;animation:brcqs .25s cubic-bezier(.2,.9,.3,1)}
+      @keyframes brcqs{from{transform:translateY(30px);opacity:0}}
+      #brc-jr .jh{display:flex;align-items:center;padding:16px 16px 8px}
+      #brc-jr .jh b{flex:1;font-size:17px}
+      #brc-jr .x{width:32px;height:32px;border:none;border-radius:10px;background:#ffffff10;color:#e6edf0;cursor:pointer}
+      #brc-jr .js{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 16px}
+      #brc-jr .js > div{padding:10px 12px;border-radius:14px;background:#182125;border:1px solid #ffffff10}
+      #brc-jr .js small{display:block;color:#8796a0;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
+      #brc-jr .jc{display:inline-block;margin-right:8px;font-weight:800}
+      #brc-jr .jf{display:flex;gap:6px;overflow-x:auto;padding:12px 16px 6px}
+      #brc-jr .jf button{flex:none;padding:6px 10px;border-radius:999px;border:1px solid #ffffff16;background:#ffffff08;color:#8796a0;font-weight:700;font-size:12px;cursor:pointer}
+      #brc-jr .jf button.on{color:#40c4d3;border-color:#40c4d3}
+      #brc-jr .jl{overflow:auto;padding:0 16px 12px}
+      #brc-jr .jd{margin:12px 2px 6px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#8796a0;text-transform:uppercase}
+      #brc-jr .ji{display:flex;gap:10px;align-items:center;padding:9px 10px;border-radius:12px;background:#182125;margin-bottom:5px;text-decoration:none;color:#e6edf0}
+      #brc-jr .je{font-size:18px}
+      #brc-jr .jt{min-width:0}
+      #brc-jr .jt b{display:block;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      #brc-jr .jt small{color:#8796a0}
+      #brc-jr .jz{padding:24px 8px;text-align:center;color:#8796a0}
+      #brc-jr .jclr{margin:0 16px 14px;padding:10px;border:none;border-radius:12px;background:#ff5c6c1a;color:#ff8d98;font-weight:700;cursor:pointer}
+    `;
+    document.head.appendChild(c);
+  })();
 
   // Подпись куратора в ответах
   const myNick = () => (document.querySelector('.p-navgroup-link--user .p-navgroup-linkText, .p-navgroup-user-linkText')?.textContent || '').trim();
@@ -712,6 +784,8 @@
           <button class="btn pri" id="brc-upd-ins" style="display:none">⬇️ Установить обновление</button>
           <button class="btn" id="brc-upd-chk"><span>🔄</span> Проверить обновления</button>
         </div>
+        <div class="ttl">МОЙ ЖУРНАЛ</div>
+        <a class="qrow" id="brc-jr-b" href="javascript:void 0"><span class="nm2">📒 Сегодня</span><span id="brc-jr-sum"></span></a>
         <div class="ttl">ОЧЕРЕДЬ <button class="rf" id="brc-qrf">↻ обновить</button></div>
         <div id="brc-q"><div class="qe">Загружаю…</div></div>
         <button class="btn" id="brc-rules-b">📖 Правила разделов</button>
@@ -831,6 +905,14 @@
       } catch { say('❌ Код не подходит'); }
     };
     drawSig();
+    const drawJr = () => {
+      const { today } = journalStats();
+      const tot = Object.values(today).reduce((a, b) => a + b, 0);
+      pnl.querySelector('#brc-jr-sum').innerHTML = tot ? ['acc', 'dec', 'rw', 'take'].filter((k) => today[k]).map((k) => `<span class="qn" style="color:${ACT[k][2]}">${ACT[k][0]} ${today[k]}</span>`).join(' ') : '<span class="qe">пока ничего</span>';
+    };
+    drawJr();
+    pnl.querySelector('#brc-jr-b').onclick = (e) => { e.preventDefault(); e.stopPropagation(); setOpen(false); openJournal(); };
+    fab.addEventListener('click', drawJr);
     pnl.querySelector('#brc-rules-b').onclick = () => { setOpen(false); openRules((document.querySelector('.p-breadcrumbs a[href*=".2186/"]') && '2186') || (document.querySelector('.p-breadcrumbs a[href*=".2185/"]') && '2185') || (document.querySelector('.p-breadcrumbs a[href*=".2183/"]') && '2183') || (location.pathname.match(/(\d+)\/?$/) || [])[1]); };
 
     pnl.querySelectorAll('.opt').forEach((o) => {
@@ -1511,6 +1593,40 @@
     return c.s === 'ok' ? 'ok' : 'bad';
   }
 
+  // Орфография и грамматика через LanguageTool (бесплатный публичный API)
+  let ltErrors = [];
+  async function spellCheck() {
+    const src = text.replace(/https?:\/\/\S+/g, ' ').slice(0, 18000);
+    if (src.replace(/\s/g, '').length < 40) return null;
+    const ck = 'lt_' + threadId;
+    const cached = ls.get(ck, null);
+    let matches;
+    if (cached && cached.len === src.length && cached.v === VERSION) matches = cached.m;
+    else {
+      const body = new URLSearchParams({ text: src, language: 'ru-RU', enabledOnly: 'false' });
+      const r = await fetch('https://api.languagetool.org/v2/check', { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+      if (!r.ok) throw new Error('сервис ответил ' + r.status);
+      const j = await r.json();
+      matches = (j.matches || []).map((m) => ({
+        o: m.offset, l: m.length, msg: m.shortMessage || m.message, rep: (m.replacements || []).slice(0, 2).map((x) => x.value),
+        cat: m.rule?.category?.id || '', w: src.substr(m.offset, m.length),
+      }));
+      try { ls.set(ck, { len: src.length, v: VERSION, m: matches }); } catch {}
+    }
+    // не считаем: ники, латиницу, имена с большой буквы, пробелы/типографику
+    ltErrors = matches.filter((m) => m.w && !/[A-Za-z_0-9]/.test(m.w) && !/^TYPOGRAPHY|^WHITESPACE|^STYLE/i.test(m.cat)
+      && !(m.cat === 'TYPOS' && /^[А-ЯЁ]/.test(m.w)));
+    const words = (src.match(/[А-Яа-яЁё]+/g) || []).length || 1;
+    const n = ltErrors.length;
+    const per100 = Math.round((n / words) * 1000) / 10;
+    const reason = MANUAL[sec.key][{ bio: 3, sit: 1, org: 8 }[sec.key]].replace(/\.\s*(\(п\.[^)]*\))?\.?$/, '') + ` — найдено ошибок: ${n}` + ({ bio: ' (п. 1.5).', sit: ' (п. 1.2).', org: '.' }[sec.key]);
+    const pl = (k) => (k % 10 === 1 && k % 100 !== 11 ? 'ошибка' : k % 10 >= 2 && k % 10 <= 4 && (k % 100 < 12 || k % 100 > 14) ? 'ошибки' : 'ошибок');
+    if (!n) return { s: 'ok', t: 'Орфография: ошибок не найдено', sp: true };
+    if (n >= 8 && per100 >= 2) return { s: 'fail', t: `Орфография: ${n} ${pl(n)} (${per100} на 100 слов)`, r: reason, sp: true };
+    if (n >= 3) return { s: 'warn', t: `Орфография: ${n} ${pl(n)} — глянь`, r: reason, sp: true };
+    return { s: 'ok', t: `Орфография: ${n} ${pl(n)}, мелочь`, sp: true };
+  }
+
   // 4. Доработка — последнее сообщение не от автора содержит "доработк\"
   function reworkState() {
     const msgs = [...document.querySelectorAll('article.message')];
@@ -1835,6 +1951,11 @@
         const t = moveTarget(pending.move);
         if (t) { await moveThread(t.id); toast(`Перенесено в «${t.name}»`); await new Promise((r) => setTimeout(r, 700)); }
       }
+      try {
+        const j = ls.get('journal', []);
+        j.unshift({ t: Date.now(), act: pending.act || 'other', sec: sec.key, title: title().slice(0, 90), href: threadBase, who: author });
+        ls.set('journal', j.slice(0, 600));
+      } catch {}
       toast('Готово ✔');
       if (ls.get('auto_next', false)) setTimeout(goNext, 600);
       else setTimeout(() => location.reload(), 800);
@@ -1907,6 +2028,11 @@
     #brc .ok .fx{color:var(--g)}#brc .fail .fx{color:var(--r)}#brc .warn .fx{color:var(--y)}
     #brc .sh a.cnt{text-decoration:none;color:var(--b)}
     #brc .sh a.cnt svg.i{width:13px;height:13px}
+    #brc .spd{margin-top:6px;font-size:12px}
+    #brc .spd summary{color:var(--b);font-weight:700;cursor:pointer}
+    #brc .spe{padding:5px 0;border-bottom:1px solid var(--line)}
+    #brc .spe i{color:var(--g);font-style:normal;font-weight:700}
+    #brc .spe small{display:block;color:var(--mut)}
     #brc .gal{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
     #brc .gi{aspect-ratio:1;border-radius:12px;border:1px solid var(--line);background:#0b1013 center/cover no-repeat;cursor:pointer;padding:0}
     #brc .gl{grid-column:span 2;display:flex;align-items:center;gap:6px;padding:9px 10px;border-radius:12px;background:var(--card2);border:1px solid var(--line);color:var(--b);text-decoration:none;font-size:12px;font-weight:700;min-width:0}
@@ -1956,6 +2082,7 @@
     mark.brc-m.sp{background:#ffe14755}
     mark.brc-m.sup{background:#3ec6d055}
     mark.brc-m.ooc{background:#ff7ad955;outline:1px solid #ff7ad9}
+    mark.brc-m.lt{background:transparent;text-decoration:underline wavy #ff5c6c;text-underline-offset:3px}
     #brc-pv{position:fixed;inset:0;z-index:100003;background:#000a;display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px);
       font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;color:#e6edf0;animation:brcfade .2s}
     @keyframes brcfade{from{opacity:0}}
@@ -2150,8 +2277,8 @@
     if (ls.get('min', false)) box.classList.add('min');
     qs('.tog', box).onclick = () => { box.classList.toggle('min'); ls.set('min', box.classList.contains('min')); };
     qs('#brc-send', box).onclick = finish;
-    qs('#brc-diss', box).onclick = () => choose(T.dissolve(days), { close: true, sticky: false, move: 'arc' });
-    qs('#brc-rem', box).onclick = () => choose(T.remind(), { close: false, sticky: true });
+    qs('#brc-diss', box).onclick = () => choose(T.dissolve(days), { close: true, sticky: false, move: 'arc', act: 'diss' });
+    qs('#brc-rem', box).onclick = () => choose(T.remind(), { close: false, sticky: true, act: 'rem' });
   }
 
   /* ---------- кто уже взял тему ---------- */
@@ -2236,6 +2363,7 @@
     ['sp', /[а-яё][,.!?](?=[а-яё])/gi, 'Нет пробела после знака'],
     ['sup', new RegExp(RX_SUPER.source, 'gi'), 'Сверхъестественное'],
     ['ooc', new RegExp(RX_OOC.source, 'gi'), 'OOC-информация'],
+    ['lt', ltErrors.length ? new RegExp(`(?<![А-Яа-яЁё])(${[...new Set(ltErrors.map((e) => e.w).filter((w) => w.trim().length > 1))].map(reEsc).join('|')})(?![А-Яа-яЁё])`, 'g') : null, 'Ошибка (LanguageTool)'],
   ].filter((r) => r[1]);
 
   function toggleHL() {
@@ -2301,7 +2429,9 @@
       : `<span class="chip t">${I('clock')}${72 - hours} ч</span>`;
 
     const icon = (st) => (st === 'load' ? '<i class="sp"></i>' : I({ ok: 'check', warn: 'alert', fail: 'x' }[st]));
-    const item = (c) => `<div class="it ${c.s}"><div class="ic">${icon(c.s)}</div><div class="tx">${esc2(c.t)}</div>${
+    const spList = () => ltErrors.length ? `<details class="spd"><summary>показать ошибки</summary>${ltErrors.slice(0, 25).map((e) =>
+      `<div class="spe"><b>${esc2(e.w)}</b>${e.rep.length ? ` → <i>${esc2(e.rep.join(', '))}</i>` : ''}<small>${esc2(e.msg || '')}</small></div>`).join('')}${ltErrors.length > 25 ? `<small>…и ещё ${ltErrors.length - 25}</small>` : ''}</details>` : '';
+    const item = (c) => `<div class="it ${c.s}"><div class="ic">${icon(c.s)}</div><div class="tx">${esc2(c.t)}${c.sp ? spList() : ''}</div>${
       c.link ? `<a class="lnk" href="${esc2(c.link)}" target="_blank" title="Открыть">${I('ext')}</a>` : ''}</div>`;
     const ck = (txt, del) => `<label class="ck"><input type="checkbox" data-t="${esc2(txt)}" ${sel.has(txt) ? 'checked' : ''}><i></i><span>${esc2(txt)}${autoSet.has(txt) ? ' <em class="au">авто</em>' : ''}</span>${
       del != null ? `<button class="del" data-del="${del}" title="Удалить">×</button>` : ''}</label>`;
@@ -2386,7 +2516,7 @@
           ${q ? `<a class="tb" href="https://www.google.com/search?q=${q}" target="_blank">${I('globe')}Google</a>
                  <a class="tb" href="https://yandex.ru/search/?text=${q}" target="_blank">${I('globe')}Яндекс</a>` : ''}
         </div>
-        ${state.hl ? `<div class="legend"><mark class="brc-m copy">копипаст-фраза</mark><mark class="brc-m mix">подмена букв</mark><mark class="brc-m caps">капс</mark><mark class="brc-m low">маленькая буква</mark><mark class="brc-m sp">нет пробела</mark><mark class="brc-m sup">сверхъестеств.</mark><mark class="brc-m ooc">OOC</mark></div>` : ''}
+        ${state.hl ? `<div class="legend"><mark class="brc-m copy">копипаст-фраза</mark><mark class="brc-m mix">подмена букв</mark><mark class="brc-m caps">капс</mark><mark class="brc-m low">маленькая буква</mark><mark class="brc-m sp">нет пробела</mark><mark class="brc-m sup">сверхъестеств.</mark><mark class="brc-m ooc">OOC</mark><mark class="brc-m lt">орфография</mark></div>` : ''}
 
         ${fails.length || warns.length || loading.length ? `<div class="sec"><div class="sh">Замечания</div><div class="lst">${[...fails, ...warns, ...loading].map(item).join('')}</div></div>` : ''}
         ${gallery.length ? `<div class="sec"><div class="sh"><span>Доказательства · ${gallery.length}</span></div>
@@ -2452,22 +2582,22 @@
     $('brc-ok').onclick = () => {
       mark('brc-ok');
       choose(T.accept(), sec.key === 'org'
-        ? { prefix: PREFIX.ACCEPT, close: false, sticky: true } // орга: открыта + закреп (п. 1.2, 2.4)
-        : { prefix: PREFIX.ACCEPT, close: true, move: 'acc' });
+        ? { prefix: PREFIX.ACCEPT, close: false, sticky: true, act: 'acc' } // орга: открыта + закреп (п. 1.2, 2.4)
+        : { prefix: PREFIX.ACCEPT, close: true, move: 'acc', act: 'acc' });
     };
-    $('brc-wt').onclick = () => { mark('brc-wt'); choose(T.watch(), { prefix: PREFIX.WATCHED, close: false }); };
+    $('brc-wt').onclick = () => { mark('brc-wt'); choose(T.watch(), { prefix: PREFIX.WATCHED, close: false, act: 'take' }); };
     $('brc-decline').onclick = () => {
       const rs = reasons();
       if (!rs.length) return toast('Отметь хотя бы одну причину');
-      choose(T.decline(rs), { prefix: PREFIX.DECLINE, close: true, move: 'dec' });
+      choose(T.decline(rs), { prefix: PREFIX.DECLINE, close: true, move: 'dec', act: 'dec' });
     };
     $('brc-rework').onclick = () => {
       const rs = reasons();
       if (!rs.length) return toast('Отметь, что нужно исправить');
-      choose(T.rework(rs), { prefix: PREFIX.WATCHED, close: false, move: 'rw' });
+      choose(T.rework(rs), { prefix: PREFIX.WATCHED, close: false, move: 'rw', act: 'rw' });
     };
     const rwno = $('brc-rwno');
-    if (rwno) rwno.onclick = () => choose(T.decline([`Тема не была исправлена в течение 24 часов после отправки на доработку (п. ${RULE.rw}).`]), { prefix: PREFIX.DECLINE, close: true, move: 'dec' });
+    if (rwno) rwno.onclick = () => choose(T.decline([`Тема не была исправлена в течение 24 часов после отправки на доработку (п. ${RULE.rw}).`]), { prefix: PREFIX.DECLINE, close: true, move: 'dec', act: 'dec' });
   }
 
   /* ---------- запуск ---------- */
@@ -2501,6 +2631,23 @@
     }
     if (sec.key !== 'sit') swap(LOAD_DUP, dup);
     swap(LOAD_COPY, copy);
+
+    try {
+      const LOAD_SP = { s: 'load', t: 'Проверяю орфографию (LanguageTool)…' };
+      checks.push(LOAD_SP); render();
+      const sp = await spellCheck();
+      const i = checks.indexOf(LOAD_SP);
+      if (i >= 0) checks.splice(i, 1);
+      if (sp) {
+        // настоящая проверка заменяет грубую прикидку
+        checks = checks.filter((c) => !/^Похоже на ошибки|^Явных ошибок/.test(c.t));
+        checks.push(sp);
+      }
+    } catch (e) {
+      checks = checks.filter((c) => c.s !== 'load' || !/орфограф/i.test(c.t));
+      checks.push({ s: 'warn', t: 'Орфография: сервис недоступен (' + (e.message || 'нет связи') + ') — проверь глазами' });
+    }
+    render();
 
     state.dossier = await dossier();
     render();
