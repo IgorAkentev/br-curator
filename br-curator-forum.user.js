@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.2.1
+// @version      5.2.2
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.2.2 — компактное меню со вкладками
 // @note         5.2.1 — верные ID префиксов по умолчанию (8/4/2), точные адреса разделов
 // @note         5.2.0 — после вердикта тема переносится в подраздел (Одобренные / Неодобренные / На доработке)
 // @note         5.1.0 — шпаргалка правил с поиском, своя подпись в ответах
@@ -103,7 +104,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.2.1';
+  const VERSION = '5.2.2';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -406,7 +407,7 @@
         font:800 11px/18px -apple-system,Segoe UI,Roboto,sans-serif;border:2px solid #11181b;display:none;box-sizing:border-box}
       @keyframes brcpulse{0%{box-shadow:0 0 0 0 #ff546899}70%{box-shadow:0 0 0 8px #ff546800}100%{box-shadow:0 0 0 0 #ff546800}}
 
-      #brc-upd{position:fixed;left:14px;bottom:150px;z-index:100001;width:300px;max-width:calc(100vw - 28px);max-height:calc(100vh - 180px);overflow:auto;
+      #brc-upd{position:fixed;left:14px;bottom:150px;z-index:100001;width:310px;max-width:calc(100vw - 28px);max-height:calc(100vh - 170px);overflow:auto;
         border-radius:20px;padding:1px;background:linear-gradient(135deg,#3ec6d0aa,#1ec27a33 45%,#ffffff12 65%,#3ec6d055);
         box-shadow:0 18px 50px #000c;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;color:#e6edf0;
         opacity:0;transform:translateY(10px) scale(.97);transform-origin:bottom left;pointer-events:none;transition:opacity .2s,transform .2s}
@@ -431,7 +432,7 @@
       #brc-upd .btn.spin span{display:inline-block;animation:brcrot .8s linear infinite}
       @keyframes brcrot{to{transform:rotate(360deg)}}
       #brc-upd .ttl{margin:16px 0 6px;font-size:11px;font-weight:800;letter-spacing:.08em;color:#8b9aa1}
-      #brc-upd .opt{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:#ffffff08;margin-bottom:6px;cursor:pointer}
+      #brc-upd .opt{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:12px;background:#ffffff08;margin-bottom:5px;cursor:pointer;font-weight:600}
       #brc-upd .opt .tx{flex:1}
       #brc-upd .opt .tx small{display:block;color:#8b9aa1;font-size:11px}
       #brc-upd .sw{position:relative;width:40px;height:23px;border-radius:20px;background:#ffffff22;flex:none;transition:.2s}
@@ -441,7 +442,7 @@
       #brc-upd .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
       #brc-upd .grid .btn{margin-top:0;font-size:12px;padding:10px 6px}
       #brc-upd .ttl .rf{float:right;background:none;border:none;color:#3ec6d0;font-weight:800;cursor:pointer;font-size:11px}
-      #brc-upd .qrow{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;background:#ffffff08;margin-bottom:6px;color:#e6edf0;text-decoration:none}
+      #brc-upd .qrow{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:12px;background:#ffffff08;margin-bottom:6px;color:#e6edf0;text-decoration:none}
       #brc-upd .qrow .nm2{flex:1;font-weight:700}
       #brc-upd .qn{padding:2px 8px;border-radius:10px;background:#ffffff14;font-weight:800;font-size:12px}
       #brc-upd .ql{padding:2px 8px;border-radius:10px;background:#ff5468;color:#fff;font-weight:800;font-size:12px}
@@ -453,7 +454,14 @@
       #brc-upd .sc{width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
       #brc-upd .sc.on{border-color:#fff;box-shadow:0 0 0 2px #11181b inset}
       #brc-upd .sigpv{text-align:right;font-style:italic;padding:8px 10px;border-radius:9px;background:#2a3236;margin-bottom:6px;min-height:18px}
-      #brc-upd .ft{margin-top:14px;text-align:center;font-size:11px;color:#8b9aa1}
+      #brc-upd .mtabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:12px;padding:4px;border-radius:12px;background:#ffffff0a}
+      #brc-upd .mt{display:flex;flex-direction:column;align-items:center;gap:1px;padding:6px 2px;border:none;border-radius:9px;background:none;color:#8b9aa1;font-weight:700;font-size:10.5px;cursor:pointer}
+      #brc-upd .mt span{font-size:16px}
+      #brc-upd .mt.on{background:#3ec6d022;color:#3ec6d0}
+      #brc-upd .pane{margin-top:10px}
+      #brc-upd .pane > .card{margin-top:0}
+      #brc-upd .opt .oi{width:22px;text-align:center;font-size:15px}
+      #brc-upd .ft{margin-top:10px;text-align:center;font-size:11px;color:#8b9aa1}
       #brc-upd .ft a{color:#3ec6d0;text-decoration:none;font-weight:700}
     `;
     document.head.appendChild(st);
@@ -464,14 +472,16 @@
     fab.innerHTML = GEAR + '<span class="dot"></span><span class="cnt"></span>';
 
     const OPTS = [
-      ['preview', true, 'Предпросмотр ответа', 'Перед отправкой показать, как будет выглядеть ответ'],
-      ['auto_send', false, 'Мгновенная отправка', 'Без предпросмотра: ответ уходит сразу по клику'],
-      ['move', true, 'Переносить в подразделы', 'Одобренные / Неодобренные / На доработке'],
-      ['auto_next', false, 'Дальше по очереди', 'После отправки сразу открывать следующую тему'],
-      ['q_badge', true, 'Счётчик на иконке', 'Сколько тем просрочено во всех разделах'],
-      ['queue', true, 'Таймеры в разделах', 'Очередь и сроки 72 ч в списке тем'],
-      ['min', false, 'Свёрнутая панель', 'Панель проверки открывается свёрнутой'],
+      ['preview', true, '👁', 'Предпросмотр ответа'],
+      ['auto_send', false, '⚡', 'Мгновенная отправка'],
+      ['move', true, '📂', 'Переносить в подразделы'],
+      ['auto_next', false, '➡️', 'Дальше по очереди'],
+      ['q_badge', true, '🔴', 'Счётчик на иконке'],
+      ['queue', true, '⏱', 'Таймеры в разделах'],
+      ['min', false, '▾', 'Свёрнутая панель'],
     ];
+    const opt = ([k, d, ic, n]) => `<div class="opt ${ls.get(k, d) ? 'on' : ''}" data-k="${k}" data-d="${d}"><span class="oi">${ic}</span><div class="tx">${n}</div><div class="sw"></div></div>`;
+    const TABS = [['main', '🏠', 'Главное'], ['set', '⚙️', 'Настройки'], ['forum', '🧩', 'Форум'], ['sig', '✍️', 'Подпись']];
 
     const pnl = document.createElement('div');
     pnl.id = 'brc-upd';
@@ -481,43 +491,53 @@
         <div><div class="nm">Скрипт кураторов</div><div class="sb">Khabarovsk 49</div></div>
         <div class="ver">v${VERSION}</div>
       </div>
+      <div class="mtabs">${TABS.map(([k, ic, n]) => `<button class="mt" data-t="${k}"><span>${ic}</span>${n}</button>`).join('')}</div>
 
-      <div class="card" id="brc-upd-card">
-        <div class="row1" id="brc-upd-st">Обновления ещё не проверялись</div>
-        <div class="tm" id="brc-upd-tm"></div>
-        <div id="brc-upd-notes"></div>
-        <button class="btn pri" id="brc-upd-ins" style="display:none">⬇️ Установить обновление</button>
-        <button class="btn" id="brc-upd-chk"><span>🔄</span> Проверить обновления</button>
+      <div class="pane" data-p="main">
+        <div class="card" id="brc-upd-card">
+          <div class="row1" id="brc-upd-st">Обновления ещё не проверялись</div>
+          <div class="tm" id="brc-upd-tm"></div>
+          <div id="brc-upd-notes"></div>
+          <button class="btn pri" id="brc-upd-ins" style="display:none">⬇️ Установить обновление</button>
+          <button class="btn" id="brc-upd-chk"><span>🔄</span> Проверить обновления</button>
+        </div>
+        <div class="ttl">ОЧЕРЕДЬ <button class="rf" id="brc-qrf">↻ обновить</button></div>
+        <div id="brc-q"><div class="qe">Загружаю…</div></div>
+        <button class="btn" id="brc-rules-b">📖 Правила разделов</button>
       </div>
 
-      <div class="ttl">ОЧЕРЕДЬ <button class="rf" id="brc-qrf">↻ обновить</button></div>
-      <div id="brc-q"><div class="qe">Загружаю…</div></div>
-
-      <div class="ttl">НАСТРОЙКИ</div>
-      ${OPTS.map(([k, d, n, h]) => `<div class="opt ${ls.get(k, d) ? 'on' : ''}" data-k="${k}" data-d="${d}">
-        <div class="tx">${n}<small>${h}</small></div><div class="sw"></div></div>`).join('')}
-
-      <div class="ttl">ПРЕФИКСЫ <button class="rf" id="brc-pfx-rf">↻ найти</button></div>
-      <div id="brc-pfx"></div>
-
-      <div class="ttl">ПОДПИСЬ В ОТВЕТАХ</div>
-      <div class="opt ${ls.get('sig_on', false) ? 'on' : ''}" data-k="sig_on" data-d="false"><div class="tx">Добавлять подпись<small>Внизу каждого ответа, справа, курсивом</small></div><div class="sw"></div></div>
-      <div class="sigbox">
-        <input id="brc-sig" maxlength="120" placeholder="${SIG_DEF}">
-        <div class="sigc">${['rgb(139, 154, 161)', 'rgb(62, 198, 208)', 'rgb(30, 194, 122)', 'rgb(255, 181, 71)', 'rgb(166, 107, 255)', 'rgb(255, 84, 104)'].map((c) => `<button class="sc" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
-        <div class="sigpv" id="brc-sigpv"></div>
-        <div class="qe">{nick} заменится на твой ник</div>
+      <div class="pane" data-p="set">
+        ${OPTS.map(opt).join('')}
+        <div class="grid" style="margin-top:8px">
+          <button class="btn" id="brc-clr">🧹 Сбросить кэш</button>
+          <button class="btn" id="brc-cust">🗑 Свои причины</button>
+        </div>
       </div>
 
-      <div class="ttl">ИНСТРУМЕНТЫ</div>
-      <div class="grid">
-        <button class="btn" id="brc-clr">🧹 Сбросить кэш</button>
-        <button class="btn" id="brc-cust">🗑 Свои причины</button>
-        <button class="btn" id="brc-rules-b" style="grid-column:1/-1">📖 Правила разделов</button>
+      <div class="pane" data-p="forum">
+        <div class="ttl" style="margin-top:4px">ПРЕФИКСЫ <button class="rf" id="brc-pfx-rf">↻ найти</button></div>
+        <div id="brc-pfx"></div>
       </div>
 
-      <div class="ft">Сделано для кураторов форума · <a href="https://github.com/IgorAkentev/br-curator" target="_blank">GitHub</a></div>
+      <div class="pane" data-p="sig">
+        ${opt(['sig_on', false, '✍️', 'Добавлять подпись'])}
+        <div class="sigbox">
+          <input id="brc-sig" maxlength="120" placeholder="${SIG_DEF}">
+          <div class="sigc">${['rgb(139, 154, 161)', 'rgb(62, 198, 208)', 'rgb(30, 194, 122)', 'rgb(255, 181, 71)', 'rgb(166, 107, 255)', 'rgb(255, 84, 104)'].map((c) => `<button class="sc" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
+          <div class="sigpv" id="brc-sigpv"></div>
+          <div class="qe">{nick} заменится на твой ник</div>
+        </div>
+      </div>
+
+      <div class="ft"><a href="https://github.com/IgorAkentev/br-curator" target="_blank">GitHub</a></div>
     </div>`;
+    const showTab = (t) => {
+      pnl.querySelectorAll('.mt').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+      pnl.querySelectorAll('.pane').forEach((p) => (p.style.display = p.dataset.p === t ? 'block' : 'none'));
+      ls.set('menu_tab', t);
+    };
+    pnl.querySelectorAll('.mt').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); showTab(b.dataset.t); }));
+    showTab(ls.get('menu_tab', 'main'));
     document.body.append(fab, pnl);
 
     const setOpen = (o) => { pnl.classList.toggle('open', o); fab.classList.toggle('open', o); };
