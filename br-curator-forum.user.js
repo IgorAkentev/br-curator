@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      4.1.0
+// @version      5.0.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.0.0 — кнопка «Следующая тема», счётчик просроченных на иконке, предпросмотр ответа, проверка OOC, контроль отчётов неоф. орг, общие причины команды
 // @note         4.1.0 — новое меню: статус обновлений, настройки (мгновенная отправка, таймеры, свёрнутая панель), сброс кэша
 // @note         4.0.2 — фото по ссылке текстом засчитываются, фикс иконки
 // @note         4.0.1 — новая иконка настроек, фикс дублей и таймера на рассмотренных темах
@@ -92,7 +93,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '4.1.0';
+  const VERSION = '5.0.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -106,6 +107,31 @@
     for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
     return 0;
   };
+
+  for (const id in SECTIONS) SECTIONS[id].id = id;
+  const SEC_ORDER = ['2186', '2185', '2183'];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Очередь раздела: незакрытые темы без вердикта, самые горящие первыми
+  function queueFromDoc(root) {
+    const now = Date.now() / 1000;
+    const out = [];
+    root.querySelectorAll('.structItem--thread').forEach((it) => {
+      if (it.querySelector('.structItem-status--sticky')) return;
+      const pref = (it.querySelector('.structItem-title .label')?.textContent || '').trim();
+      if (it.querySelector('.structItem-status--locked') || /одобрен|отказ|закрыт/i.test(pref)) return;
+      const t = +(it.querySelector('.structItem-startDate time, time.u-dt')?.getAttribute('data-time') || 0);
+      const a = [...it.querySelectorAll('.structItem-title a[href*="/threads/"]')].pop();
+      if (!t || !a) return;
+      const href = new URL(a.getAttribute('href'), location.origin).href;
+      out.push({ it, t, href, id: (href.match(/\.(\d+)\//) || [])[1], title: a.textContent.trim(), left: 72 - Math.floor((now - t) / 3600) });
+    });
+    return out.sort((a, b) => a.left - b.left);
+  }
+  async function fetchQueue(id) {
+    const r = await fetch(`/forums/${id}/`, { credentials: 'same-origin' });
+    return queueFromDoc(new DOMParser().parseFromString(await r.text(), 'text/html'));
+  }
 
   (function updater() {
     const GEAR = `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -123,6 +149,8 @@
       #brc-fab:active{transform:scale(.92)}
       #brc-fab .dot{position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:#ff5468;border:2px solid #11181b;display:none;
         animation:brcpulse 1.4s infinite}
+      #brc-fab .cnt{position:absolute;bottom:-7px;right:-9px;min-width:22px;height:22px;padding:0 5px;border-radius:11px;background:#ff5468;color:#fff;
+        font:800 11px/18px -apple-system,Segoe UI,Roboto,sans-serif;border:2px solid #11181b;display:none;box-sizing:border-box}
       @keyframes brcpulse{0%{box-shadow:0 0 0 0 #ff546899}70%{box-shadow:0 0 0 8px #ff546800}100%{box-shadow:0 0 0 0 #ff546800}}
 
       #brc-upd{position:fixed;left:14px;bottom:150px;z-index:100001;width:300px;max-width:calc(100vw - 28px);max-height:calc(100vh - 180px);overflow:auto;
@@ -159,6 +187,13 @@
       #brc-upd .opt.on .sw::after{left:20px}
       #brc-upd .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
       #brc-upd .grid .btn{margin-top:0;font-size:12px;padding:10px 6px}
+      #brc-upd .ttl .rf{float:right;background:none;border:none;color:#3ec6d0;font-weight:800;cursor:pointer;font-size:11px}
+      #brc-upd .qrow{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;background:#ffffff08;margin-bottom:6px;color:#e6edf0;text-decoration:none}
+      #brc-upd .qrow .nm2{flex:1;font-weight:700}
+      #brc-upd .qn{padding:2px 8px;border-radius:10px;background:#ffffff14;font-weight:800;font-size:12px}
+      #brc-upd .ql{padding:2px 8px;border-radius:10px;background:#ff5468;color:#fff;font-weight:800;font-size:12px}
+      #brc-upd .qs{padding:2px 8px;border-radius:10px;background:#ffb54733;color:#ffb547;font-weight:800;font-size:12px}
+      #brc-upd .qe{color:#8b9aa1;font-size:12px}
       #brc-upd .ft{margin-top:14px;text-align:center;font-size:11px;color:#8b9aa1}
       #brc-upd .ft a{color:#3ec6d0;text-decoration:none;font-weight:700}
     `;
@@ -167,10 +202,13 @@
     const fab = document.createElement('button');
     fab.id = 'brc-fab';
     fab.title = 'Скрипт кураторов';
-    fab.innerHTML = GEAR + '<span class="dot"></span>';
+    fab.innerHTML = GEAR + '<span class="dot"></span><span class="cnt"></span>';
 
     const OPTS = [
-      ['auto_send', false, 'Мгновенная отправка', 'Ответ уходит сразу по клику, без кнопки «Отправить»'],
+      ['preview', true, 'Предпросмотр ответа', 'Перед отправкой показать, как будет выглядеть ответ'],
+      ['auto_send', false, 'Мгновенная отправка', 'Без предпросмотра: ответ уходит сразу по клику'],
+      ['auto_next', false, 'Дальше по очереди', 'После отправки сразу открывать следующую тему'],
+      ['q_badge', true, 'Счётчик на иконке', 'Сколько тем просрочено во всех разделах'],
       ['queue', true, 'Таймеры в разделах', 'Очередь и сроки 72 ч в списке тем'],
       ['min', false, 'Свёрнутая панель', 'Панель проверки открывается свёрнутой'],
     ];
@@ -191,6 +229,9 @@
         <button class="btn pri" id="brc-upd-ins" style="display:none">⬇️ Установить обновление</button>
         <button class="btn" id="brc-upd-chk"><span>🔄</span> Проверить обновления</button>
       </div>
+
+      <div class="ttl">ОЧЕРЕДЬ <button class="rf" id="brc-qrf">↻ обновить</button></div>
+      <div id="brc-q"><div class="qe">Загружаю…</div></div>
 
       <div class="ttl">НАСТРОЙКИ</div>
       ${OPTS.map(([k, d, n, h]) => `<div class="opt ${ls.get(k, d) ? 'on' : ''}" data-k="${k}" data-d="${d}">
@@ -216,6 +257,7 @@
         o.classList.toggle('on', v);
         ls.set(o.dataset.k, v);
         if (o.dataset.k === 'min') document.getElementById('brc')?.classList.toggle('min', v);
+        if (o.dataset.k === 'q_badge') refreshQueue();
       };
     });
 
@@ -278,6 +320,40 @@
       chkBtn.classList.remove('spin');
     }
 
+    // ---- очередь по всем разделам ----
+    const cntEl = fab.querySelector('.cnt');
+    const qEl = pnl.querySelector('#brc-q');
+    async function refreshQueue(force) {
+      let c = ls.get('q_cache', null);
+      if (force || !c || Date.now() - c.ts > 10 * 60e3) {
+        qEl.innerHTML = '<div class="qe">Загружаю…</div>';
+        const secs = {};
+        for (const id of SEC_ORDER) {
+          try {
+            const q = await fetchQueue(id);
+            secs[id] = { total: q.length, late: q.filter((x) => x.left <= 0).length, soon: q.filter((x) => x.left > 0 && x.left <= 24).length };
+          } catch { secs[id] = null; }
+          await wait(400);
+        }
+        c = { ts: Date.now(), secs };
+        ls.set('q_cache', c);
+      }
+      let late = 0;
+      qEl.innerHTML = SEC_ORDER.map((id) => [id, SECTIONS[id]]).map(([id, sc]) => {
+        const x = c.secs[id];
+        if (!x) return `<div class="qrow"><span class="nm2">${sc.name}</span><span class="qe">не загрузилось</span></div>`;
+        late += x.late;
+        return `<a class="qrow" href="/forums/${id}/"><span class="nm2">${sc.name}</span>
+          ${x.late ? `<span class="ql">🔥 ${x.late}</span>` : ''}${x.soon ? `<span class="qs">⏳ ${x.soon}</span>` : ''}
+          <span class="qn">${x.total}</span></a>`;
+      }).join('');
+      const show = ls.get('q_badge', true) && late > 0;
+      cntEl.style.display = show ? 'block' : 'none';
+      cntEl.textContent = late > 99 ? '99+' : late;
+    }
+    pnl.querySelector('#brc-qrf').onclick = (e) => { e.stopPropagation(); refreshQueue(true); };
+    refreshQueue();
+
     chkBtn.onclick = () => check(true);
     if (Date.now() - ls.get('last_check', 0) > CHECK_EVERY_H * 3600e3) check(false);
   })();
@@ -286,15 +362,14 @@
 
   (function queue() {
     if (!ls.get('queue', true)) return;
-    const m = location.pathname.match(/^\/forums\/[^/]*\.(\d+)\/?/);
+    const m = location.pathname.match(/^\/forums\/(?:[^/]*\.)?(\d+)\/?/);
     if (!m || !SECTIONS[m[1]]) return;
-    const items = [...document.querySelectorAll('.structItem--thread')];
-    if (!items.length) return;
+    if (!document.querySelector('.structItem--thread')) return;
 
     const st = document.createElement('style');
     st.textContent = `
       .brcq{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:12px;font:700 11px/18px -apple-system,Segoe UI,Roboto,sans-serif;vertical-align:middle;white-space:nowrap}
-      .brcq.g{background:#1ec27a22;color:#1ec27a}.brcq.y{background:#ffb54722;color:#ffb547}.brcq.r{background:#ff5468;color:#fff}
+      .brcq.g{background:#1ec27a22;color:#1ec27a}.brcq.y{background:#ffb54722;color:#ffb547}.brcq.r{background:#ff5468;color:#fff}.brcq.b{background:#3ec6d022;color:#3ec6d0}
       .brcq-late{box-shadow:inset 3px 0 0 #ff5468}
       #brcq-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0;padding:12px 14px;border-radius:14px;
         background:#11181bf2;border:1px solid #3ec6d055;color:#e6edf0;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 6px 18px #0006}
@@ -304,21 +379,27 @@
     `;
     document.head.appendChild(st);
 
-    const now = Date.now() / 1000;
-    const data = [];
-    for (const it of items) {
-      if (it.querySelector('.structItem-status--sticky')) continue;
-      const pref = (it.querySelector('.structItem-title .label')?.textContent || '').trim();
-      if (it.querySelector('.structItem-status--locked') || /одобрен|отказ|закрыт/i.test(pref)) continue;
-      const t = +(it.querySelector('.structItem-startDate time, time.u-dt')?.getAttribute('data-time') || 0);
-      if (!t) continue;
-      const left = 72 - Math.floor((now - t) / 3600);
-      data.push({ it, left });
-      const chip = document.createElement('span');
-      chip.className = 'brcq ' + (left <= 0 ? 'r' : left <= 24 ? 'y' : 'g');
-      chip.textContent = left <= 0 ? `⏱ просрочено на ${-left} ч` : `⏱ ${left} ч`;
-      (it.querySelector('.structItem-title') || it).appendChild(chip);
-      if (left <= 0) it.classList.add('brcq-late');
+    const chip = (it, cls, txt) => {
+      const c = document.createElement('span');
+      c.className = 'brcq ' + cls; c.textContent = txt;
+      (it.querySelector('.structItem-title') || it).appendChild(c);
+    };
+
+    const data = queueFromDoc(document);
+    for (const d of data) {
+      chip(d.it, d.left <= 0 ? 'r' : d.left <= 24 ? 'y' : 'g', d.left <= 0 ? `⏱ просрочено на ${-d.left} ч` : `⏱ ${d.left} ч`);
+      if (d.left <= 0) d.it.classList.add('brcq-late');
+    }
+
+    // Одобренные (закреплённые) организации — когда в теме последний раз была активность
+    if (SECTIONS[m[1]].key === 'org') {
+      document.querySelectorAll('.structItem--thread').forEach((it) => {
+        if (!it.querySelector('.structItem-status--sticky')) return;
+        const t = +(it.querySelector('.structItem-latestDate time, .structItem-cell--latest time')?.getAttribute('data-time') || 0);
+        if (!t) return;
+        const days = Math.floor((Date.now() / 1000 - t) / 86400);
+        chip(it, days >= 7 ? 'r' : 'b', days >= 7 ? `💤 тишина ${days} дн` : `активность ${days} дн назад`);
+      });
     }
 
     const late = data.filter((d) => d.left <= 0).length;
@@ -329,16 +410,15 @@
       <span style="color:#ff5468">🔥 Просрочено: <b>${late}</b></span>
       <span style="color:#ffb547">⏳ Меньше суток: <b>${soon}</b></span>
       <span class="sp"></span><button>⇅ По сроку</button>`;
-    const anchorEl = items[0].closest('.block') || items[0].parentElement;
+    const first = document.querySelector('.structItem--thread');
+    const anchorEl = first.closest('.block') || first.parentElement;
     anchorEl.parentElement.insertBefore(bar, anchorEl);
 
     bar.querySelector('button').onclick = () => {
       const parent = data[0]?.it.parentElement;
       if (!parent) return;
       // самые горящие — наверх (закреплённые у XenForo в отдельной группе, их не трогаем)
-      [...data].sort((a, b) => b.left - a.left).forEach((d) => {
-        if (d.it.parentElement === parent) parent.prepend(d.it);
-      });
+      [...data].reverse().forEach((d) => { if (d.it.parentElement === parent) parent.prepend(d.it); });
       bar.querySelector('button').textContent = '✓ Отсортировано';
     };
   })();
@@ -369,6 +449,7 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const token = () => window.XF?.config?.csrf || qs('input[name="_xfToken"]')?.value || '';
   const parseDoc = (h) => new DOMParser().parseFromString(h, 'text/html');
+  const RX_OOC = /(?<![А-Яа-яЁёA-Za-z])(админ(?!истрац)[а-яё]*|модер[а-яё]*|сервер[а-яё]*|донат[а-яё]*|лвл|левел[а-яё]*|репорт[а-яё]*|скрипт[а-яё]*|читер[а-яё]*|аккаунт[а-яё]*|никнейм[а-яё]*|форум[а-яё]*|ooc|оос|nonrp|нонрп|\/me|\/do|\/try|\/todo)(?![А-Яа-яЁёA-Za-z])/gi;
   const RX_MIXED = /[А-Яа-яЁё]+[A-Za-z]+[А-Яа-яЁёA-Za-z]*|[A-Za-z]+[А-Яа-яЁё]+[А-Яа-яЁёA-Za-z]*/g;
 
   // Результаты поиска XenForo -> [{id, href, title, label, minor, user}]
@@ -551,7 +632,10 @@
       const nameLine = (text.match(/(?:имя|фио)[^:\n]{0,30}:\s*([^\n]+)/i) || [])[1] || '';
       if (nick && nameLine.trim()) {
         const [n, s] = nick.split('_');
-        res.push(nameLine.includes(n) && nameLine.includes(s)
+        const TR = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya' };
+        const lat = nameLine.toLowerCase().replace(/[а-яё]/g, (c) => TR[c] ?? c).replace(/[^a-z]/g, '');
+        const near = (w) => lat.includes(w.toLowerCase().slice(0, 3));
+        res.push((nameLine.includes(n) && nameLine.includes(s)) || (near(n) && near(s))
           ? { s: 'ok', t: 'Ник совпадает с именем в анкете' }
           : { s: 'warn', t: `Ник ${nick} ≠ «${nameLine.trim().slice(0, 30)}»` });
       }
@@ -586,6 +670,11 @@
         } catch { res.push({ s: 'warn', t: 'Не смог открыть биографию лидера' }); }
       }
     }
+
+    // OOC-информация
+    const ooc = [...new Set((text.match(RX_OOC) || []).map((w) => w.trim().toLowerCase()))];
+    res.push(!ooc.length ? { s: 'ok', t: 'Без OOC-слов' }
+      : { s: 'warn', t: `OOC-слова: ${ooc.slice(0, 6).join(', ')} — проверь${sec.key === 'sit' ? ' (п. 1.1)' : ''}` });
 
     // Сверхъестественное
     const sup = text.match(RX_SUPER);
@@ -646,7 +735,7 @@
   /* ===================== ОТВЕТЫ ===================== */
 
   const G = 'rgb(0, 200, 83)', R = 'rgb(255, 60, 60)', Y = 'rgb(255, 170, 0)';
-  const hello = `[CENTER]Здравствуйте, [USER]${author}[/USER].[/CENTER]<br>`;
+  const hello = `[CENTER]Здравствуйте, ${authorId ? `[USER=${authorId}]${author}[/USER]` : author}.[/CENTER]<br>`;
   const list = (rs) => `[LIST]<br>${rs.map((r) => `[*]${r}`).join('<br>')}<br>[/LIST]<br>`;
 
   const T = {
@@ -654,6 +743,8 @@
       + (sec.key === 'org' ? `<br>[CENTER]Тема остаётся открытой — публикуйте отчёты о деятельности по форме. Если в течение недели от лидера не будет сообщений, организация будет считаться распущенной.[/CENTER]` : ''),
     decline: (rs) => `${hello}[CENTER]Требования не соблюдены:[/CENTER]<br>${list(rs)}[CENTER][COLOR=${R}][B]${sec.what} отказана.[/B][/COLOR][/CENTER]`,
     rework: (rs) => `${hello}[CENTER]Тема оставлена на доработку. Необходимо исправить:[/CENTER]<br>${list(rs)}[CENTER]На внесение изменений даётся 24 часа. Если тема не будет отредактирована за это время, она будет отказана.[/CENTER]<br>[CENTER][COLOR=${Y}][B]На доработке.[/B][/COLOR][/CENTER]`,
+    dissolve: (days) => `${hello}[CENTER]В течение ${days} дней в теме не было отчётов от лидера о деятельности организации.[/CENTER]<br>[CENTER]Согласно п. 1.2 и 2.6 правил, организация считается распущенной, тема закрывается.[/CENTER]<br>[CENTER][COLOR=${R}][B]Организация распущена.[/B][/COLOR][/CENTER]`,
+    remind: () => `${hello}[CENTER]Напоминаем: лидер обязан публиковать отчёты о деятельности организации по форме. Если в течение недели в теме не будет сообщений от лидера, организация будет считаться распущенной (п. 1.2).[/CENTER]<br>[CENTER][COLOR=${Y}][B]Ожидаем отчёт.[/B][/COLOR][/CENTER]`,
     watch: () => `${hello}[CENTER]Ваша тема взята на рассмотрение. Ожидайте ответа.[/CENTER]<br>[CENTER][COLOR=${Y}][B]На рассмотрении.[/B][/COLOR][/CENTER]`,
   };
 
@@ -672,10 +763,18 @@
     return false;
   }
 
+  async function currentPrefix() {
+    try {
+      const d = parseDoc(await (await fetch(threadBase + 'edit', { credentials: 'same-origin' })).text());
+      return d.querySelector('select[name="prefix_id"] option[selected], input[name="prefix_id"]:checked')?.value || '';
+    } catch { return ''; }
+  }
+
   async function editThread({ prefix, close, sticky }) {
     const fd = new FormData();
     fd.append('title', title());
-    if (prefix) fd.append('prefix_id', prefix);
+    const pf = prefix ?? (await currentPrefix());
+    if (pf) fd.append('prefix_id', pf);
     fd.append('_xfSet[discussion_open]', '1');
     if (!close) fd.append('discussion_open', '1');
     fd.append('_xfSet[sticky]', '1');
@@ -690,12 +789,26 @@
   }
 
   let pending = null;
+  const sendLabel = (o) => '📨 Отправить' + (o.close ? ' + закрыть' : '') + (o.sticky ? ' + закрепить' : '');
   async function choose(html, opts) {
-    if (!insertReply(html)) return toast('Не нашёл поле ответа');
     pending = opts;
-    showSend('📨 Отправить' + (opts.close ? ' + закрыть' : '') + (opts.sticky ? ' + закрепить' : ''));
-    if (ls.get('auto_send', false)) await finish();
-    else toast('Ответ вставлен — проверь и жми «Отправить»');
+    if (ls.get('auto_send', false)) {
+      if (!insertReply(html)) return toast('Не нашёл поле ответа');
+      return finish();
+    }
+    if (ls.get('preview', true)) return openPreview(html, opts);
+    if (!insertReply(html)) return toast('Не нашёл поле ответа');
+    showSend(sendLabel(opts));
+    toast('Ответ вставлен — проверь и жми «Отправить»');
+  }
+
+  async function goNext() {
+    toast('Ищу следующую тему…');
+    try {
+      const q = (await fetchQueue(sec.id)).filter((x) => x.id !== threadId);
+      if (!q.length) return toast('Очередь пуста 🎉');
+      location.href = q[0].href;
+    } catch { toast('Не удалось получить очередь'); }
   }
 
   async function finish() {
@@ -705,7 +818,8 @@
       await new Promise((r) => setTimeout(r, 1500));
       await editThread(pending);
       toast('Готово ✔');
-      setTimeout(() => location.reload(), 800);
+      if (ls.get('auto_next', false)) setTimeout(goNext, 600);
+      else setTimeout(() => location.reload(), 800);
     } catch (e) { toast('Ошибка: ' + e.message); }
   }
 
@@ -785,6 +899,30 @@
     mark.brc-m.low{background:#ffb54755}
     mark.brc-m.sp{background:#ffe14755}
     mark.brc-m.sup{background:#3ec6d055}
+    mark.brc-m.ooc{background:#ff7ad955;outline:1px solid #ff7ad9}
+    #brc-pv{position:fixed;inset:0;z-index:100003;background:#000a;display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px);
+      font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;color:#e6edf0;animation:brcfade .2s}
+    @keyframes brcfade{from{opacity:0}}
+    #brc-pv .md{width:100%;max-width:560px;max-height:92vh;overflow:auto;background:#11181b;border:1px solid #3ec6d055;border-radius:22px 22px 0 0;padding:16px;
+      box-shadow:0 -10px 40px #000c;animation:brcup .25s}
+    @media(min-width:600px){#brc-pv{align-items:center}#brc-pv .md{border-radius:22px}}
+    @keyframes brcup{from{transform:translateY(40px)}}
+    #brc-pv .hd2{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+    #brc-pv .hd2 b{font-size:16px;flex:1}
+    #brc-pv .x{background:#ffffff14;border:none;color:#e6edf0;width:34px;height:34px;border-radius:10px;font-size:18px;cursor:pointer}
+    #brc-pv .tabs{display:flex;gap:6px;margin-bottom:10px}
+    #brc-pv .tab{flex:1;padding:8px;border-radius:10px;border:1px solid #ffffff14;background:#ffffff08;color:#8b9aa1;font-weight:700;cursor:pointer}
+    #brc-pv .tab.on{color:#3ec6d0;border-color:#3ec6d0}
+    #brc-pv .view{padding:16px;border-radius:14px;background:#2a3236;min-height:120px}
+    #brc-pv .view ul{margin:8px 0;padding-left:22px;text-align:left}
+    #brc-pv .view a{color:#3ec6d0;word-break:break-all}
+    #brc-pv textarea{width:100%;box-sizing:border-box;min-height:220px;padding:12px;border-radius:14px;border:1px solid #ffffff22;background:#0b1012;color:#e6edf0;
+      font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;resize:vertical}
+    #brc-pv .meta2{margin-top:10px;font-size:12px;color:#8b9aa1}
+    #brc-pv .bt{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+    #brc-pv .bt button{padding:13px;border:none;border-radius:12px;font-weight:800;font-size:14px;cursor:pointer;color:#e6edf0;background:#ffffff12}
+    #brc-pv .bt .go{grid-column:1/-1;background:linear-gradient(135deg,#3ec6d0,#1ec27a);color:#fff;box-shadow:0 6px 18px #1ec27a44}
+    #brc .acts.two{grid-template-columns:1fr 1fr}
     #brc-toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%) translateY(20px);opacity:0;transition:.25s;
       background:#11181bf2;color:#e6edf0;border:1px solid #3ec6d066;padding:10px 16px;border-radius:12px;z-index:100002;
       box-shadow:0 8px 24px #000a;font:600 13px -apple-system,Segoe UI,Roboto,sans-serif;pointer-events:none}
@@ -811,11 +949,147 @@
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+  /* ---------- 3. предпросмотр ответа ---------- */
+  function bbToHtml(raw) {
+    let h = raw.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    h = h.replace(/\[LIST\]\s*([\s\S]*?)\[\/LIST\]/gi, (m, b) => '<ul>' + b.split(/\[\*\]/).filter((x) => x.trim()).map((x) => `<li>${x.trim()}</li>`).join('') + '</ul>');
+    h = h.replace(/\[CENTER\]([\s\S]*?)\[\/CENTER\]/gi, '<div style="text-align:center">$1</div>')
+      .replace(/\[COLOR=([^\]]+)\]([\s\S]*?)\[\/COLOR\]/gi, '<span style="color:$1">$2</span>')
+      .replace(/\[B\]([\s\S]*?)\[\/B\]/gi, '<b>$1</b>')
+      .replace(/\[I\]([\s\S]*?)\[\/I\]/gi, '<i>$1</i>')
+      .replace(/\[USER(?:=\d+)?\]([\s\S]*?)\[\/USER\]/gi, '<span style="color:#3ec6d0;font-weight:600">$1</span>')
+      .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>');
+    return h.replace(/\n(?=<\/?(ul|li|div))/g, '').replace(/(<\/(ul|li|div)>)\n/g, '$1').replace(/\n/g, '<br>');
+  }
+
+  function openPreview(html, opts) {
+    document.getElementById('brc-pv')?.remove();
+    const raw = html.replaceAll('<br>', '\n');
+    const pv = document.createElement('div');
+    pv.id = 'brc-pv';
+    pv.innerHTML = `<div class="md">
+      <div class="hd2"><b>Предпросмотр ответа</b><button class="x" title="Закрыть">✕</button></div>
+      <div class="tabs"><button class="tab on" data-t="v">👁 Как увидят</button><button class="tab" data-t="e">✏️ Править текст</button></div>
+      <div class="view"></div>
+      <textarea style="display:none"></textarea>
+      <div class="meta2">${[opts.prefix ? 'префикс будет изменён' : '', opts.close ? 'тема будет закрыта' : 'тема останется открытой', opts.sticky ? 'тема будет закреплена' : ''].filter(Boolean).join(' · ')}</div>
+      <div class="bt">
+        <button class="go">${sendLabel(opts)}</button>
+        <button class="ed">📝 В редактор</button>
+        <button class="cn">Отмена</button>
+      </div></div>`;
+    document.body.appendChild(pv);
+    const view = qs('.view', pv), ta = qs('textarea', pv);
+    ta.value = raw;
+    const upd = () => (view.innerHTML = bbToHtml(ta.value));
+    upd();
+    ta.oninput = upd;
+    pv.querySelectorAll('.tab').forEach((t) => (t.onclick = () => {
+      pv.querySelectorAll('.tab').forEach((x) => x.classList.toggle('on', x === t));
+      const e = t.dataset.t === 'e';
+      ta.style.display = e ? 'block' : 'none';
+      view.style.display = e ? 'none' : 'block';
+    }));
+    const close = () => pv.remove();
+    qs('.x', pv).onclick = close;
+    qs('.cn', pv).onclick = close;
+    pv.onclick = (e) => { if (e.target === pv) close(); };
+    const put = () => insertReply(ta.value.replaceAll('\n', '<br>'));
+    qs('.ed', pv).onclick = () => {
+      if (!put()) return toast('Не нашёл поле ответа');
+      close(); showSend(sendLabel(opts)); toast('Текст в редакторе — жми «Отправить» в панели');
+    };
+    qs('.go', pv).onclick = () => {
+      if (!put()) return toast('Не нашёл поле ответа');
+      close(); finish();
+    };
+  }
+
+  /* ---------- 5. контроль одобренной организации ---------- */
+  const orgApproved = sec.key === 'org' && /одобрен/i.test(qs('.p-title-value .label')?.textContent || '');
+
+  async function orgControl() {
+    box.innerHTML = `<div class="in"><div class="load"><div class="sp"></div>Смотрю отчёты организации…</div></div>`;
+    let d = document;
+    try { d = parseDoc(await (await fetch(threadBase + 'page-9999', { credentials: 'same-origin' })).text()); } catch {}
+    const firstId = firstMsg?.getAttribute('data-content');
+    const who = (m) => (qs('.message-name .username', m)?.textContent || '').trim();
+    const when = (m) => +(qs('time.u-dt', m)?.getAttribute('data-time') || 0);
+    const txt = (m) => qs('.bbWrapper', m)?.innerText || '';
+    const msgs = [...d.querySelectorAll('article.message')].filter((m) => !firstId || m.getAttribute('data-content') !== firstId);
+    const lead = msgs.filter((m) => who(m) === author);
+    const now = Date.now() / 1000;
+    const isFreeze = (m) => /замороз|заморож/i.test(txt(m));
+
+    const lastT = lead.length ? Math.max(...lead.map(when)) : 0;
+    const approvedMsg = msgs.find((m) => who(m) !== author && /одобрен/i.test(txt(m)));
+    const base = lastT || (approvedMsg && when(approvedMsg)) || when(firstMsg);
+    const days = Math.floor((now - base) / 86400);
+    const fr = lead.filter(isFreeze).map(when).sort((a, b) => b - a)[0];
+    const frozenLeft = fr ? Math.ceil((fr + 14 * 86400 - now) / 86400) : 0;
+    const frozen = frozenLeft > 0;
+    const dead = days >= 7 && !frozen;
+
+    const reports = lead.filter((m) => !isFreeze(m)).slice(-5).reverse().map((m) => {
+      const t = txt(m);
+      const miss = [['дата', /дата/i], ['описание', /описани/i], ['состав', /состав|участник/i]].filter(([, re]) => !re.test(t)).map(([n]) => n);
+      const proof = m.querySelector('.bbWrapper img:not(.smilie), .bbMediaWrapper, iframe, .message-attachments, .bbWrapper a[href^="http"]') || /https?:\/\//.test(t);
+      if (!proof) miss.push('доказательства');
+      const dt = new Date(when(m) * 1000).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+      return miss.length ? { s: 'warn', t: `Отчёт ${dt}: нет — ${miss.join(', ')}` } : { s: 'ok', t: `Отчёт ${dt}: по форме` };
+    });
+
+    const col = dead ? 'var(--r)' : frozen ? 'var(--b)' : days >= 5 ? 'var(--y)' : 'var(--g)';
+    const verdict = dead ? `Нет отчётов ${days} дн` : frozen ? `Заморожена ещё ${frozenLeft} дн` : lastT ? 'Организация активна' : 'Отчётов пока нет';
+    const item = (c) => `<div class="it ${c.s}"><div class="ic">${{ ok: '✓', warn: '!', fail: '✕' }[c.s]}</div><div>${esc2(c.t)}</div></div>`;
+
+    box.innerHTML = `<div class="in">
+      <div class="hd">
+        <div class="ring" style="display:grid;place-items:center;border-radius:50%;border:6px solid ${col}"><b style="color:${col};position:static;font-size:13px;text-align:center;line-height:1.1">${frozen ? '❄️' : days + '<br>дн'}</b></div>
+        <div>
+          <div class="ttl">Контроль организации</div>
+          <div class="vrd" style="color:${col}">${verdict}</div>
+          <div class="chips">
+            <span class="chip t">👤 лидер ${esc2(author)}</span>
+            <span class="chip ${dead ? 'r' : 'g'}">⏱ ${lastT ? `последний отчёт ${days} дн назад` : 'отчётов не было'}</span>
+            ${frozen ? `<span class="chip t">❄️ заморозка до ${new Date((fr + 14 * 86400) * 1000).toLocaleDateString('ru-RU')}</span>` : ''}
+          </div>
+        </div>
+        <button class="tog" title="Свернуть">▾</button>
+      </div>
+      <div class="body">
+        ${dead ? `<div class="bn r"><div>💤 <b>Неделя без отчётов</b> — по п. 1.2 и 2.6 организацию можно распускать.</div></div>` : ''}
+        <div class="acts two">
+          <button class="a no" id="brc-diss" ${dead ? '' : 'disabled title="Ещё не прошло 7 дней"'}><span>⛔</span>Распустить</button>
+          <button class="a wt" id="brc-rem"><span>📣</span>Напомнить</button>
+        </div>
+        <div class="sec"><div class="sh">Последние отчёты лидера</div>${reports.length ? reports.map(item).join('') : '<div class="it warn"><div class="ic">!</div><div>На последней странице темы нет сообщений от лидера</div></div>'}</div>
+        <button class="send" id="brc-send" style="display:none"></button>
+        <div class="ft">Скрипт кураторов v${VERSION} · заморозка: 2 недели раз в месяц (п. 1.3)</div>
+      </div></div>`;
+    if (ls.get('min', false)) box.classList.add('min');
+    qs('.tog', box).onclick = () => { box.classList.toggle('min'); ls.set('min', box.classList.contains('min')); };
+    qs('#brc-send', box).onclick = finish;
+    qs('#brc-diss', box).onclick = () => choose(T.dissolve(days), { close: true, sticky: false });
+    qs('#brc-rem', box).onclick = () => choose(T.remind(), { close: false, sticky: true });
+  }
+
   /* ---------- состояние ---------- */
   const esc2 = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const manual = MANUAL[sec.key];
   const custKey = 'custom_' + sec.key;
   const getCust = () => ls.get(custKey, []);
+  const SHARED_URL = UPDATE_URL.replace(/[^/]+$/, 'reasons.json');
+  const getShared = () => (ls.get('shared', { data: {} }).data || {})[sec.key] || [];
+  (async () => {
+    const c = ls.get('shared', null);
+    if (c && Date.now() - c.ts < 60 * 60e3) return;
+    try {
+      const data = await (await fetch(SHARED_URL + '?t=' + Date.now(), { cache: 'no-store' })).json();
+      ls.set('shared', { ts: Date.now(), data });
+      if (typeof render === 'function' && checks.length) render();
+    } catch {}
+  })();
   const rw = reworkState();
   const state = { rsOpen: false, okOpen: false, send: '', hl: false };
   const sel = new Set();      // выбранные причины (текстом)
@@ -838,6 +1112,7 @@
     ['low', /[.!?]\s+[а-яё]/g, 'Предложение с маленькой буквы'],
     ['sp', /[а-яё][,.!?](?=[а-яё])/gi, 'Нет пробела после знака'],
     ['sup', new RegExp(RX_SUPER.source, 'gi'), 'Сверхъестественное'],
+    ['ooc', new RegExp(RX_OOC.source, 'gi'), 'OOC-информация'],
   ].filter((r) => r[1]);
 
   function toggleHL() {
@@ -942,6 +1217,7 @@
           ${fails.length ? '<div class="sub">НАЙДЕНО СКРИПТОМ</div>' + fails.map((f) => ck(f.r)).join('') : ''}
           <div class="sub">ОТМЕТЬ САМ, ЕСЛИ ЕСТЬ</div>
           ${manual.map((m) => ck(m)).join('')}
+          ${getShared().length ? '<div class="sub">ОБЩИЕ ПРИЧИНЫ КОМАНДЫ</div>' + getShared().map((m) => ck(m)).join('') : ''}
           ${cust.length ? '<div class="sub">ТВОИ ПРИЧИНЫ</div>' + cust.map((c, i) => ck(c, i)).join('') : ''}
           <div class="addr"><input id="brc-newr" placeholder="Своя причина, например: Нет пункта «Образование» (п. 1.1)"><button id="brc-addr">＋</button></div>
           <div class="rsb">
@@ -951,11 +1227,12 @@
         </div>
 
         <div class="tools">
-          <button class="tb ${state.hl ? 'on' : ''}" id="brc-hl">🔍 ${state.hl ? 'Убрать подсветку' : 'Подсветить в тексте'}</button>
+          <button class="tb ${state.hl ? 'on' : ''}" id="brc-hl">🔍 ${state.hl ? 'Убрать подсветку' : 'Подсветить'}</button>
+          <button class="tb" id="brc-next">➡️ Следующая</button>
           ${q ? `<a class="tb" href="https://www.google.com/search?q=${q}" target="_blank">🌐 Google</a>
                  <a class="tb" href="https://yandex.ru/search/?text=${q}" target="_blank">🌐 Яндекс</a>` : ''}
         </div>
-        ${state.hl ? `<div class="legend"><mark class="brc-m copy">копипаст-фраза</mark><mark class="brc-m mix">подмена букв</mark><mark class="brc-m caps">капс</mark><mark class="brc-m low">маленькая буква</mark><mark class="brc-m sp">нет пробела</mark><mark class="brc-m sup">сверхъестеств.</mark></div>` : ''}
+        ${state.hl ? `<div class="legend"><mark class="brc-m copy">копипаст-фраза</mark><mark class="brc-m mix">подмена букв</mark><mark class="brc-m caps">капс</mark><mark class="brc-m low">маленькая буква</mark><mark class="brc-m sp">нет пробела</mark><mark class="brc-m sup">сверхъестеств.</mark><mark class="brc-m ooc">OOC</mark></div>` : ''}
 
         ${fails.length || warns.length || loading.length ? `<div class="sec"><div class="sh">Замечания</div>${[...fails, ...warns, ...loading].map(item).join('')}</div>` : ''}
         <div class="sec">
@@ -976,7 +1253,7 @@
   function bind(fails) {
     const $ = (id) => qs('#' + id, box);
     const reasons = () => {
-      const order = [...fails.map((f) => f.r), ...manual, ...getCust()];
+      const order = [...fails.map((f) => f.r), ...manual, ...getShared(), ...getCust()];
       return order.filter((t, i) => sel.has(t) && order.indexOf(t) === i);
     };
     const mark = (id) => box.querySelectorAll('.acts .a').forEach((b) => b.classList.toggle('on', b.id === id));
@@ -1004,6 +1281,7 @@
     $('brc-addr').onclick = add;
     $('brc-newr').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
 
+    $('brc-next').onclick = goNext;
     $('brc-hl').onclick = () => {
       const n = toggleHL();
       render();
@@ -1034,6 +1312,7 @@
 
   /* ---------- запуск ---------- */
   (async () => {
+    if (orgApproved) return orgControl();
     checks = await runChecks();
     const LOAD_DUP = { s: 'load', t: 'Ищу другие темы автора…' };
     const LOAD_COPY = { s: 'load', t: 'Ищу копипаст по форуму…' };
