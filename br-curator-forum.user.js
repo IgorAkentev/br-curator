@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.6.0
+// @version      5.7.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.7.0 — досье автора, «что исправлено после прошлого отказа», уведомления о новых темах
 // @note         5.6.0 — таймер 24 ч в подразделах «на доработке», доработки в очереди меню и в счётчике
 // @note         5.5.3 — тема: выбор префикса и второстепенные кнопки в тёмном стиле
 // @note         5.5.2 — меню выезжает снизу шторкой и не обрезается; шестерёнка меньше и бледнеет при прокрутке
@@ -207,7 +208,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.6.0';
+  const VERSION = '5.7.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -611,6 +612,7 @@
 
     const OPTS = [
       ['theme', true, '🎨', 'Тема форума'],
+      ['notify', false, '🔔', 'Уведомления о новых темах'],
       ['preview', true, '👁', 'Предпросмотр ответа'],
       ['auto_send', false, '⚡', 'Мгновенная отправка'],
       ['move', true, '📂', 'Переносить в подразделы'],
@@ -722,6 +724,11 @@
         if (o.dataset.k === 'q_badge') refreshQueue();
         if (o.dataset.k === 'sig_on') drawSig();
         if (o.dataset.k === 'theme') applyTheme(v);
+        if (o.dataset.k === 'notify' && v) {
+          ls.set('known_ids', null); ls.set('notif_ts', 0);
+          try { window.Notification && Notification.permission === 'default' && Notification.requestPermission(); } catch {}
+          pollNew();
+        }
       };
     });
 
@@ -863,6 +870,68 @@
     }
     pnl.querySelector('#brc-qrf').onclick = (e) => { e.stopPropagation(); refreshQueue(true); };
     refreshQueue();
+
+    // ---- уведомления о новых темах ----
+    const nst = document.createElement('style');
+    nst.textContent = `
+      #brc-nt{position:fixed;left:8px;right:8px;top:8px;z-index:100006;display:flex;flex-direction:column;gap:8px;max-width:460px;margin:0 auto;pointer-events:none}
+      #brc-nt .n{pointer-events:auto;display:flex;gap:12px;align-items:center;padding:12px 14px;border-radius:16px;background:#11181bf7;border:1px solid #40c4d366;
+        box-shadow:0 12px 30px #000c;color:#e6edf0;font:13px/1.35 -apple-system,Segoe UI,Roboto,sans-serif;cursor:pointer;animation:brcnt .3s cubic-bezier(.2,.9,.3,1)}
+      #brc-nt .n b{display:block;color:#40c4d3;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+      #brc-nt .n .e{font-size:22px}
+      #brc-nt .n .x{margin-left:auto;background:none;border:none;color:#8796a0;font-size:16px;cursor:pointer}
+      @keyframes brcnt{from{transform:translateY(-20px);opacity:0}}
+    `;
+    document.head.appendChild(nst);
+    const ntBox = document.createElement('div');
+    ntBox.id = 'brc-nt';
+    document.body.appendChild(ntBox);
+    const baseTitle = document.title;
+    let unseen = 0;
+
+    function notifyNew(n) {
+      unseen++;
+      document.title = `(${unseen}) ${baseTitle}`;
+      try { navigator.vibrate && navigator.vibrate([120, 60, 120]); } catch {}
+      let sys = false;
+      try {
+        if (window.Notification && Notification.permission === 'granted' && document.hidden) {
+          const no = new Notification(`🆕 ${n.sec}`, { body: n.title, tag: 'brc-' + n.id });
+          no.onclick = () => { window.focus(); location.href = n.href; };
+          sys = true;
+        }
+      } catch {}
+      if (sys) return;
+      const el = document.createElement('div');
+      el.className = 'n';
+      el.innerHTML = `<span class="e">🆕</span><div><b>${n.sec}</b>${n.title.replace(/[<>&]/g, '')}</div><button class="x">✕</button>`;
+      el.onclick = (e) => { if (e.target.classList.contains('x')) { el.remove(); return; } location.href = n.href; };
+      ntBox.appendChild(el);
+      setTimeout(() => el.remove(), 15000);
+    }
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { unseen = 0; document.title = baseTitle; } });
+
+    async function pollNew() {
+      if (!ls.get('notify', false)) return;
+      if (Date.now() - ls.get('notif_ts', 0) < 5 * 60e3) return;
+      ls.set('notif_ts', Date.now());
+      const known = ls.get('known_ids', null);
+      const fresh = {};
+      const news = [];
+      for (const id of SEC_ORDER) {
+        try {
+          const q = await fetchQueue(id);
+          fresh[id] = q.map((x) => x.id);
+          if (known && known[id]) q.forEach((x) => { if (!known[id].includes(x.id)) news.push({ sec: SECTIONS[id].name, title: x.title, href: x.href, id: x.id }); });
+        } catch { fresh[id] = (known && known[id]) || []; }
+        await wait(400);
+      }
+      ls.set('known_ids', fresh);
+      news.slice(0, 5).forEach(notifyNew);
+      if (news.length) refreshQueue(true);
+    }
+    setTimeout(pollNew, 4000);
+    setInterval(pollNew, 60e3);
 
     chkBtn.onclick = () => check(true);
     if (Date.now() - ls.get('last_check', 0) > CHECK_EVERY_H * 3600e3) check(false);
@@ -1067,20 +1136,22 @@
   }
 
   // 2. Дубли — другие темы автора
+  let authorRows = null;
   async function dupCheck() {
-    if (sec.key === 'sit') return null;
     if (!authorId) return { s: 'warn', t: 'Дубли: не смог определить автора' };
     const r = await fetch(`/search/member?user_id=${authorId}&content=thread`, { credentials: 'same-origin' });
     const d = parseDoc(await r.text());
     searchError(d);
     const re = sec.key === 'bio' ? /биограф/i : /организац/i;
     const rows = searchResults(d).filter((x) => x.id !== threadId && re.test(x.minor + ' ' + x.title));
+    // префикс темы важнее названия подраздела; «Неодобренные» — это отказ
+    const st = (x) => /отказ|закрыт|неодобр/i.test(x.label) ? 'dec' : /одобрен/i.test(x.label) ? 'acc'
+      : /отказ|неодобр/i.test(x.minor) ? 'dec' : /одобрен/i.test(x.minor) ? 'acc' : /доработ/i.test(x.minor) ? 'rw' : 'pend';
+    authorRows = rows.map((x) => ({ id: x.id, href: x.href, title: x.title, st: st(x) }));
     if (!rows.length) return { s: 'ok', t: 'Дубли: других тем автора в разделе нет' };
-    // префикс темы важнее названия подраздела
-    const st = (x) => /отказ|закрыт/i.test(x.label) ? 'dec' : /одобрен/i.test(x.label) ? 'acc'
-      : /отказ/i.test(x.minor) ? 'dec' : /одобрен/i.test(x.minor) ? 'acc' : 'pend';
     const acc = rows.find((x) => st(x) === 'acc');
     const pend = rows.find((x) => st(x) === 'pend');
+    if (sec.key === 'sit') return null;
     if (sec.key === 'bio' && acc && !pend) return { s: 'warn', t: `У автора уже есть одобренная био: «${acc.title}» — проверь, не тот ли персонаж`, link: acc.href };
     if (pend) return { s: 'fail', t: `Дубль: ещё одна тема «${pend.title}»`, link: pend.href,
       r: `Тема является дублем — у вас уже есть тема на рассмотрении: ${pend.href}` };
@@ -1088,7 +1159,64 @@
     return { s: 'ok', t: `Дубли: прошлых тем ${rows.length}, все отказаны`, link: rows[0].href };
   }
 
-  // 4. Доработка — последнее сообщение не от автора содержит "доработк"
+  // Досье: регистрация и активность автора
+  async function dossier() {
+    const out = { rows: authorRows || [] };
+    if (!authorId) return out;
+    try {
+      const d = parseDoc(await (await fetch(`/members/${authorId}/`, { credentials: 'same-origin' })).text());
+      for (const dl of d.querySelectorAll('.memberHeader dl, .memberHeader-stats dl, dl.pairs')) {
+        const k = (dl.querySelector('dt')?.textContent || '').toLowerCase();
+        const t = dl.querySelector('time[data-time]');
+        if (/регистр/.test(k) && t) out.reg = +t.getAttribute('data-time');
+      }
+    } catch {}
+    return out;
+  }
+
+  // Что исправлено с прошлого отказа
+  const FIX_MAP = [
+    [/заголов/i, /Заголовок|заголовке/],
+    [/объ[её]м|слов/i, /Объём|Мало слов|Много слов/],
+    [/пункт|не по форме|по форме/i, /пункты формы|Нет пунктов/],
+    [/шрифт/i, /^Шрифт|Шрифт не тот/],
+    [/размер/i, /Размер шрифта|Мелкий шрифт/],
+    [/фото|материал|скрин|видео/i, /Фото\/видео|Нет фото/],
+    [/противореч|возраст/i, /Возраст/],
+    [/копир|плагиат/i, /Копипаст/],
+    [/ошиб|орфограф|грамот/i, /ошибки|Явных ошибок/],
+    [/OOC|ООС/i, /OOC/],
+    [/ник/i, /Ник |ник формата/],
+    [/исходн/i, /исходник/],
+    [/участник|состав/i, /Участников/],
+    [/биограф.*лидер|лидер.*биограф/i, /Биография лидера|биографию лидера/],
+  ];
+  async function prevRefusal() {
+    const prev = (authorRows || []).find((x) => x.st === 'dec');
+    if (!prev) return null;
+    try {
+      const d = parseDoc(await (await fetch(prev.href, { credentials: 'same-origin' })).text());
+      const msgs = [...d.querySelectorAll('article.message')];
+      const who = (m) => (m.querySelector('.message-name .username')?.textContent || '').trim();
+      const ref = msgs.filter((m) => who(m) && who(m) !== author && /отказ|не соблюден/i.test(m.querySelector('.bbWrapper')?.innerText || m.querySelector('.bbWrapper')?.textContent || '')).pop();
+      if (!ref) return { prev, reasons: [] };
+      const bb = ref.querySelector('.bbWrapper');
+      let reasons = [...bb.querySelectorAll('li')].map((li) => (li.innerText || li.textContent).trim()).filter(Boolean);
+      if (!reasons.length) reasons = (bb.innerText || bb.textContent).split('\n').map((x) => x.replace(/^[•\-–—*\s]+/, '').trim())
+        .filter((x) => x.length > 12 && !/здравствуйте|приветств|уважением|отказан|не соблюден/i.test(x));
+      const t = +(ref.querySelector('time.u-dt')?.getAttribute('data-time') || 0);
+      return { prev, by: who(ref), t, reasons: reasons.slice(0, 8) };
+    } catch { return { prev, reasons: [] }; }
+  }
+  function fixStatus(reason) {
+    const m = FIX_MAP.find(([re]) => re.test(reason));
+    if (!m) return 'unk';
+    const c = checks.find((x) => x.s !== 'load' && m[1].test(x.t));
+    if (!c) return 'unk';
+    return c.s === 'ok' ? 'ok' : 'bad';
+  }
+
+  // 4. Доработка — последнее сообщение не от автора содержит "доработк\"
   function reworkState() {
     const msgs = [...document.querySelectorAll('article.message')];
     const who = (m) => (qs('.message-name .username', m)?.textContent || '').trim();
@@ -1477,6 +1605,13 @@
     #brc .fail .ic{background:#ff5c6c1f;color:var(--r)}#brc .warn .ic{background:#ffb5471f;color:var(--y)}#brc .ok .ic{background:#22c58b1f;color:var(--g)}#brc .it.load .ic{background:#40c4d31a;color:var(--b)}
     #brc .it .tx{flex:1;min-width:0}
     #brc .lnk{flex:none;width:30px;height:30px;display:grid;place-items:center;border-radius:9px;background:#40c4d314;color:var(--b)}
+    #brc .dos{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:14px;padding:10px 12px;border-radius:14px;background:var(--card2);border:1px solid var(--line);font-size:13px}
+    #brc .dos > svg.i{color:var(--b)}
+    #brc .dos > span:first-of-type{margin-right:auto}
+    #brc .fx{font-size:11px;font-weight:700;margin-top:2px;opacity:.8}
+    #brc .ok .fx{color:var(--g)}#brc .fail .fx{color:var(--r)}#brc .warn .fx{color:var(--y)}
+    #brc .sh a.cnt{text-decoration:none;color:var(--b)}
+    #brc .sh a.cnt svg.i{width:13px;height:13px}
     #brc .okl{display:none}#brc .okl.open{display:block}
     #brc .sh .cnt{display:inline-flex;align-items:center;gap:4px;color:var(--b);text-transform:none;letter-spacing:0;font-weight:700}
 
@@ -1858,6 +1993,26 @@
 
       <div class="body">
         ${banner}
+        ${(() => {
+          const ds = state.dossier;
+          if (!ds) return '';
+          const n = (k) => ds.rows.filter((x) => x.st === k).length;
+          const days = ds.reg ? Math.floor((Date.now() / 1000 - ds.reg) / 86400) : null;
+          return `<div class="dos">${I('user')}<span><b>${esc2(author)}</b> · ${ds.rows.length ? `ещё тем в разделе: ${ds.rows.length}` : 'первая тема в разделе'}</span>
+            ${n('acc') ? `<span class="chip g">${I('check')}${n('acc')}</span>` : ''}${n('dec') ? `<span class="chip r">${I('x')}${n('dec')}</span>` : ''}
+            ${n('pend') + n('rw') ? `<span class="chip y">${I('hour')}${n('pend') + n('rw')}</span>` : ''}
+            ${days != null ? `<span class="chip ${days < 3 ? 'y' : 't'}">${I('clock')}${days < 1 ? 'зарег. сегодня' : `на форуме ${days} дн`}</span>` : ''}</div>`;
+        })()}
+        ${(() => {
+          const p = state.prev;
+          if (!p || !p.reasons) return '';
+          const icon = { ok: ['ok', 'check', 'исправлено'], bad: ['fail', 'x', 'не исправлено'], unk: ['warn', 'alert', 'проверь сам'] };
+          const list = p.reasons.map((rs) => { const [cls, ic, lbl] = icon[fixStatus(rs)]; return `<div class="it ${cls}"><div class="ic">${I(ic)}</div><div class="tx">${esc2(rs)}<div class="fx">${lbl}</div></div></div>`; }).join('');
+          const when = p.t ? new Date(p.t * 1000).toLocaleDateString('ru-RU') : '';
+          return `<div class="sec"><div class="sh"><span>Прошлый отказ${when ? ' · ' + when : ''}${p.by ? ' · ' + esc2(p.by) : ''}</span>
+            <a class="cnt" href="${esc2(p.prev.href)}" target="_blank">открыть ${I('ext')}</a></div>
+            <div class="lst">${list || `<div class="it warn"><div class="ic">${I('alert')}</div><div class="tx">Не смог прочитать причины — открой тему</div></div>`}</div></div>`;
+        })()}
         <div class="acts">
           <button class="a ok ${recOk ? 'rec' : ''}" id="brc-ok" ${fails.length ? 'disabled title="Есть нарушения"' : ''}>${I('check')}Одобрить</button>
           <button class="a no ${recNo ? 'rec' : ''} ${state.rsOpen ? 'on' : ''}" id="brc-no">${I('ban')}Отказ${sel.size ? ` <b class="nb">${sel.size}</b>` : ''}</button>
@@ -1984,15 +2139,22 @@
     };
 
     let dup, copy;
-    if (fresh) { dup = cache.dup; copy = cache.copy; }
+    if (fresh) { dup = cache.dup; copy = cache.copy; authorRows = cache.rows || null; }
     else {
-      if (sec.key !== 'sit') { dup = await safe(dupCheck); swap(LOAD_DUP, dup); await sleep(2500); }
+      dup = await safe(dupCheck);
+      if (sec.key !== 'sit') swap(LOAD_DUP, dup);
+      await sleep(2500);
       copy = await safe(copyCheck);
       const okToCache = (x) => !x || !/подождать|не сработал/.test(x.t);
-      if (okToCache(dup) && okToCache(copy)) ls.set(cacheKey, { ts: Date.now(), len: text.length, dup, copy, v: VERSION });
+      if (okToCache(dup) && okToCache(copy)) ls.set(cacheKey, { ts: Date.now(), len: text.length, dup, copy, rows: authorRows, v: VERSION });
     }
     if (sec.key !== 'sit') swap(LOAD_DUP, dup);
     swap(LOAD_COPY, copy);
+
+    state.dossier = await dossier();
+    render();
+    state.prev = await prevRefusal();
+    render();
   })();
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', brcMain, { once: true });
