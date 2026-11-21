@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.7.0
+// @version      5.8.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.8.0 — окно «Вышло обновление» с кнопками «Обновить» / «Напомнить позже», проверка каждые 30 минут, «что нового» после установки
 // @note         5.7.0 — досье автора, «что исправлено после прошлого отказа», уведомления о новых темах
 // @note         5.6.0 — таймер 24 ч в подразделах «на доработке», доработки в очереди меню и в счётчике
 // @note         5.5.3 — тема: выбор префикса и второстепенные кнопки в тёмном стиле
@@ -208,10 +209,11 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.7.0';
+  const VERSION = '5.8.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
-  const CHECK_EVERY_H = 6; // автопроверка раз в N часов
+  const GM_NOTES = (() => { try { return ((typeof GM_info !== 'undefined' && GM_info.scriptMetaStr) || '').match(/@note\s+.+/g).map((x) => x.replace(/@note\s+/, '')); } catch { return []; } })();
+  const CHECK_EVERY_H = 0.5; // автопроверка раз в N часов
 
   const ls = {
     get: (k, d) => { try { return JSON.parse(localStorage.getItem('brc_' + k)) ?? d; } catch { return d; } },
@@ -814,7 +816,7 @@
           notesEl.innerHTML = notes.length ? `<ul>${notes.map((n) => `<li>${n.replace(/^[\d.]+\s*—\s*/, '')}</li>`).join('')}</ul>` : '';
           insBtn.style.display = 'flex';
           fab.querySelector('.dot').style.display = 'block';
-          if (!manual) setOpen(true);
+          if (!manual) updPopup(remote, notes);
         } else {
           card.className = 'card ok';
           stEl.innerHTML = '✅ Установлена последняя версия';
@@ -932,6 +934,76 @@
     }
     setTimeout(pollNew, 4000);
     setInterval(pollNew, 60e3);
+
+    // ---- всплывающее окно обновления ----
+    const ust = document.createElement('style');
+    ust.textContent = `
+      #brc-up{position:fixed;inset:0;z-index:100007;display:flex;align-items:center;justify-content:center;padding:16px;background:#000b;backdrop-filter:blur(4px);
+        font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;color:#e6edf0;animation:brcupf .2s}
+      @keyframes brcupf{from{opacity:0}}
+      #brc-up .c{width:100%;max-width:400px;max-height:85vh;overflow:auto;border-radius:24px;padding:22px 18px 16px;background:#11181b;border:1px solid #40c4d355;
+        box-shadow:0 30px 80px #000;text-align:center;animation:brcupc .35s cubic-bezier(.2,.9,.3,1.2)}
+      @keyframes brcupc{from{transform:scale(.85) translateY(20px);opacity:0}}
+      #brc-up .lg{width:64px;height:64px;margin:0 auto 12px;border-radius:20px;display:grid;place-items:center;background:linear-gradient(135deg,#3ec6d0,#1ec27a);
+        box-shadow:0 10px 30px #1ec27a66;animation:brcspin 6s linear infinite}
+      @keyframes brcspin{to{transform:rotate(360deg)}}
+      #brc-up .lg svg{width:34px!important;height:34px!important;fill:none!important}
+      #brc-up .lg svg *{fill:none!important;stroke:#fff!important;stroke-width:2px!important}
+      #brc-up h3{margin:0;font-size:19px;font-weight:800}
+      #brc-up .vv{margin:8px 0 14px;display:flex;justify-content:center;align-items:center;gap:8px;font-weight:800}
+      #brc-up .vv span{padding:3px 10px;border-radius:999px;background:#ffffff10;color:#8796a0}
+      #brc-up .vv span.n{background:#22c58b22;color:#2fd89a}
+      #brc-up ul{text-align:left;margin:0 0 14px;padding:12px 14px 12px 30px;border-radius:14px;background:#182125;border:1px solid #ffffff10}
+      #brc-up li{margin:4px 0}
+      #brc-up .b{display:block;width:100%;margin-top:8px;padding:14px;border:none;border-radius:14px;font-weight:800;font-size:15px;cursor:pointer;color:#e6edf0;background:#ffffff10}
+      #brc-up .b.go{color:#04161a;background:linear-gradient(135deg,#40c4d3,#22c58b);box-shadow:0 10px 26px -8px #22c58bcc}
+      #brc-up .hint{margin-top:10px;font-size:11px;color:#8796a0}
+    `;
+    document.head.appendChild(ust);
+    const cleanNote = (n) => n.replace(/^[\d.]+\s*—\s*/, '');
+
+    function updPopup(remote, notes) {
+      const sn = ls.get('upd_snooze', null);
+      if (sn && sn.v === remote && Date.now() < sn.until) return;
+      if (document.querySelector('#brc-up.done')) return; // сначала пусть закроют «Скрипт обновлён»
+      document.getElementById('brc-up')?.remove();
+      const m = document.createElement('div');
+      m.id = 'brc-up';
+      m.innerHTML = `<div class="c">
+        <div class="lg">${GEAR}</div>
+        <h3>Вышло обновление!</h3>
+        <div class="vv"><span>v${VERSION}</span>→<span class="n">v${remote}</span></div>
+        ${notes.length ? `<ul>${notes.slice(0, 6).map((n) => `<li>${cleanNote(n)}</li>`).join('')}</ul>` : ''}
+        <button class="b go">⬇️ Обновить сейчас</button>
+        <button class="b later">⏰ Напомнить через 3 часа</button>
+        <div class="hint">Откроется окно Tampermonkey — нажми «Обновить», потом вернись на форум</div>
+      </div>`;
+      document.body.appendChild(m);
+      m.querySelector('.go').onclick = () => { m.remove(); location.href = UPDATE_URL; };
+      m.querySelector('.later').onclick = () => { ls.set('upd_snooze', { v: remote, until: Date.now() + 3 * 3600e3 }); m.remove(); };
+      m.onclick = (e) => { if (e.target === m) m.remove(); };
+    }
+
+    // после установки новой версии — один раз показать «что нового»
+    (() => {
+      const prevV = ls.get('last_ver', '');
+      ls.set('last_ver', VERSION);
+      if (!prevV || prevV === VERSION || verCmp(VERSION, prevV) < 0) return;
+      const notes = [...(GM_NOTES || [])].filter((n) => { const v = (n.match(/^([\d.]+)/) || [])[1]; return v && verCmp(v, prevV) > 0; });
+      const m = document.createElement('div');
+      m.id = 'brc-up';
+      m.className = 'done';
+      m.innerHTML = `<div class="c">
+        <div class="lg" style="animation:none">${GEAR}</div>
+        <h3>✅ Скрипт обновлён</h3>
+        <div class="vv"><span>v${prevV}</span>→<span class="n">v${VERSION}</span></div>
+        ${notes.length ? `<ul>${notes.slice(0, 6).map((n) => `<li>${cleanNote(n)}</li>`).join('')}</ul>` : ''}
+        <button class="b go">Круто, погнали</button>
+      </div>`;
+      document.body.appendChild(m);
+      m.querySelector('.go').onclick = () => m.remove();
+      m.onclick = (e) => { if (e.target === m) m.remove(); };
+    })();
 
     chkBtn.onclick = () => check(true);
     if (Date.now() - ls.get('last_check', 0) > CHECK_EVERY_H * 3600e3) check(false);
