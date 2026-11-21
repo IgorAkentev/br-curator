@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.1.0
+// @version      5.2.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.2.0 — после вердикта тема переносится в подраздел (Одобренные / Неодобренные / На доработке)
 // @note         5.1.0 — шпаргалка правил с поиском, своя подпись в ответах
 // @note         5.0.2 — ID префиксов берутся из формы редактирования темы и подразделов; честная ошибка в очереди
 // @note         5.0.1 — ID префиксов определяются автоматически, видны в меню
@@ -101,7 +102,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.1.0';
+  const VERSION = '5.2.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -287,6 +288,27 @@
     if (ch) ls.set('prefix_map', m);
     return m;
   }
+  // Подразделы для переноса тем: «Одобренные…», «Неодобренные…», «…на доработке», «Распущенные/Архив»
+  function learnMoves(root, secId) {
+    if (!SECTIONS[secId]) return;
+    const mm = ls.get('move_map', {});
+    const t = mm[secId] || {};
+    let found = false;
+    root.querySelectorAll('.node-title a[href*="/forums/"], .subNodeLink[href*="/forums/"]').forEach((a) => {
+      const href = a.getAttribute('href');
+      const id = (href.match(/\.(\d+)\/?(?:[?#].*)?$/) || href.match(/\/forums\/(\d+)\/?/) || [])[1];
+      const nm = a.textContent.replace(/\s+/g, ' ').trim();
+      const n = nm.toLowerCase();
+      if (!id || id === secId) return;
+      const v = { id: +id, name: nm };
+      if (/неодобр|отказ|отклон/.test(n)) { t.dec = v; found = true; }
+      else if (/доработ/.test(n)) { t.rw = v; found = true; }
+      else if (/распущ|архив|закрыт/.test(n)) { t.arc = v; found = true; }
+      else if (/одобрен|принят/.test(n)) { t.acc = v; found = true; }
+    });
+    if (found) { mm[secId] = t; ls.set('move_map', mm); }
+  }
+
   function pfx(name, def) {
     const m = ls.get('prefix_map', {});
     const k = Object.keys(m).find((k) => k.includes(name));
@@ -314,6 +336,7 @@
   const getDoc = async (url) => new DOMParser().parseFromString(await (await fetch(url, { credentials: 'same-origin' })).text(), 'text/html');
   async function fetchQueue(id) {
     const d = await getDoc(`/forums/${id}/`);
+    learnMoves(d, String(id));
     if (!d.querySelector('.structItem--thread, .js-threadList, .structItemContainer')) throw new Error('раздел не открылся');
     return queueFromDoc(d);
   }
@@ -325,15 +348,20 @@
     const edits = [];
     const cur = location.href.match(/^(https:\/\/forum\.blackrussia\.online\/threads\/[^/]+\.\d+\/)/);
     if (cur) edits.push(cur[1] + 'edit');
+    const pushEdit = (d) => {
+      const th = d.querySelector('.structItem-title a[href*="/threads/"]:not(.labelLink)');
+      if (th) edits.push(new URL(th.getAttribute('href'), location.origin).href.replace(/(\/threads\/[^/]+\/).*/, '$1') + 'edit');
+    };
     for (const id of SEC_ORDER) {
-      if (pfxDone()) break;
       try {
         const d = await getDoc(`/forums/${id}/`);
         learnPrefixes(d);
-        const th = d.querySelector('.structItem-title a[href*="/threads/"]:not(.labelLink)');
-        if (th) edits.push(new URL(th.getAttribute('href'), location.origin).href.replace(/(\/threads\/[^/]+\/).*/, '$1') + 'edit');
-        const subs = [...d.querySelectorAll('.node-title a[href*="/forums/"], .subNodeLink[href*="/forums/"]')].slice(0, 3);
-        for (const a of subs) { learnPrefixes(await getDoc(a.getAttribute('href'))); await wait(250); }
+        learnMoves(d, id);
+        pushEdit(d);
+        if (!pfxDone()) {
+          const subs = [...d.querySelectorAll('.node-title a[href*="/forums/"], .subNodeLink[href*="/forums/"]')].slice(0, 3);
+          for (const a of subs) { const sd = await getDoc(a.getAttribute('href')); learnPrefixes(sd); pushEdit(sd); await wait(250); }
+        }
       } catch {}
       await wait(250);
     }
@@ -425,6 +453,7 @@
     const OPTS = [
       ['preview', true, 'Предпросмотр ответа', 'Перед отправкой показать, как будет выглядеть ответ'],
       ['auto_send', false, 'Мгновенная отправка', 'Без предпросмотра: ответ уходит сразу по клику'],
+      ['move', true, 'Переносить в подразделы', 'Одобренные / Неодобренные / На доработке'],
       ['auto_next', false, 'Дальше по очереди', 'После отправки сразу открывать следующую тему'],
       ['q_badge', true, 'Счётчик на иконке', 'Сколько тем просрочено во всех разделах'],
       ['queue', true, 'Таймеры в разделах', 'Очередь и сроки 72 ч в списке тем'],
@@ -517,7 +546,16 @@
         return `<div class="qrow"><span class="nm2" style="color:${c}">${n}</span>${key
           ? `<span class="qn">ID ${m[key]}</span><span style="color:#1ec27a">✓</span>`
           : `<span class="qe">не найден</span>`}</div>`;
-      }).join('');
+      }).join('') + (() => {
+        const mm = ls.get('move_map', {});
+        const L = { acc: '✅', dec: '⛔', rw: '🛠', arc: '📦' };
+        return '<div class="ttl" style="margin-top:12px">ПОДРАЗДЕЛЫ ДЛЯ ПЕРЕНОСА</div>' + SEC_ORDER.map((id) => {
+          const t = mm[id] || {};
+          const items = ['acc', 'dec', 'rw', 'arc'].filter((k) => t[k]).map((k) => `${L[k]} ${t[k].name}`);
+          return `<div class="qrow" style="flex-wrap:wrap"><span class="nm2">${SECTIONS[id].name}</span>${items.length
+            ? `<span class="qe" style="flex-basis:100%">${items.join('<br>')}</span>` : '<span class="qe">не найдены — открой раздел</span>'}</div>`;
+        }).join('');
+      })();
     }
     showPfx();
     pnl.querySelector('#brc-pfx-rf').onclick = async (e) => {
@@ -630,9 +668,12 @@
   /* ===================== 3. ОЧЕРЕДЬ НА СТРАНИЦЕ РАЗДЕЛА ===================== */
 
   (function queue() {
+    const mm0 = location.pathname.match(/^\/forums\/(?:[^/]*\.)?(\d+)\/?/);
+    if (mm0 && SECTIONS[mm0[1]]) learnMoves(document, mm0[1]);
     if (!ls.get('queue', true)) return;
     const m = location.pathname.match(/^\/forums\/(?:[^/]*\.)?(\d+)\/?/);
     if (!m || !SECTIONS[m[1]]) return;
+    learnMoves(document, m[1]);
     if (!document.querySelector('.structItem--thread')) return;
 
     const st = document.createElement('style');
@@ -1061,7 +1102,23 @@
   }
 
   let pending = null;
-  const sendLabel = (o) => '📨 Отправить' + (o.close ? ' + закрыть' : '') + (o.sticky ? ' + закрепить' : '');
+  const moveTarget = (kind) => kind && ls.get('move', true) ? (ls.get('move_map', {})[sec.id] || {})[kind] : null;
+  const sendLabel = (o) => '📨 Отправить' + (o.close ? ' + закрыть' : '') + (o.sticky ? ' + закрепить' : '') + (moveTarget(o.move) ? ' + перенести' : '');
+
+  async function moveThread(nodeId) {
+    const fd = new FormData();
+    fd.append('target_node_id', nodeId);
+    fd.append('redirect_type', 'none');
+    fd.append('notify_watchers', '0');
+    fd.append('starter_alert', '0');
+    fd.append('_xfToken', token());
+    fd.append('_xfRequestUri', location.pathname);
+    fd.append('_xfWithData', '1');
+    fd.append('_xfResponseType', 'json');
+    const r = await fetch(threadBase + 'move', { method: 'POST', body: fd, credentials: 'same-origin' });
+    const j = await r.json().catch(() => ({}));
+    if (j.status && j.status !== 'ok') throw new Error((j.errors || []).join(', ') || 'не удалось перенести тему');
+  }
   async function choose(html, opts) {
     pending = opts;
     if (ls.get('auto_send', false)) {
@@ -1089,6 +1146,11 @@
       qs('.js-quickReply button[type="submit"]')?.click();
       await new Promise((r) => setTimeout(r, 1500));
       await editThread(pending);
+      if (pending.move && ls.get('move', true)) {
+        if (!moveTarget(pending.move)) { try { await fetchQueue(sec.id); } catch {} }
+        const t = moveTarget(pending.move);
+        if (t) { await moveThread(t.id); toast(`Перенесено в «${t.name}»`); await new Promise((r) => setTimeout(r, 700)); }
+      }
       toast('Готово ✔');
       if (ls.get('auto_next', false)) setTimeout(goNext, 600);
       else setTimeout(() => location.reload(), 800);
@@ -1245,7 +1307,7 @@
       <div class="tabs"><button class="tab on" data-t="v">👁 Как увидят</button><button class="tab" data-t="e">✏️ Править текст</button></div>
       <div class="view"></div>
       <textarea style="display:none"></textarea>
-      <div class="meta2">${[opts.prefix ? 'префикс будет изменён' : '', opts.close ? 'тема будет закрыта' : 'тема останется открытой', opts.sticky ? 'тема будет закреплена' : ''].filter(Boolean).join(' · ')}</div>
+      <div class="meta2">${[opts.prefix ? 'префикс будет изменён' : '', opts.close ? 'тема будет закрыта' : 'тема останется открытой', opts.sticky ? 'тема будет закреплена' : '', moveTarget(opts.move) ? `перенос в «${moveTarget(opts.move).name}»` : ''].filter(Boolean).join(' · ')}</div>
       <div class="bt">
         <button class="go">${sendLabel(opts)}</button>
         <button class="ed">📝 В редактор</button>
@@ -1343,7 +1405,7 @@
     if (ls.get('min', false)) box.classList.add('min');
     qs('.tog', box).onclick = () => { box.classList.toggle('min'); ls.set('min', box.classList.contains('min')); };
     qs('#brc-send', box).onclick = finish;
-    qs('#brc-diss', box).onclick = () => choose(T.dissolve(days), { close: true, sticky: false });
+    qs('#brc-diss', box).onclick = () => choose(T.dissolve(days), { close: true, sticky: false, move: 'arc' });
     qs('#brc-rem', box).onclick = () => choose(T.remind(), { close: false, sticky: true });
   }
 
@@ -1568,21 +1630,21 @@
       mark('brc-ok');
       choose(T.accept(), sec.key === 'org'
         ? { prefix: PREFIX.ACCEPT, close: false, sticky: true } // орга: открыта + закреп (п. 1.2, 2.4)
-        : { prefix: PREFIX.ACCEPT, close: true });
+        : { prefix: PREFIX.ACCEPT, close: true, move: 'acc' });
     };
     $('brc-wt').onclick = () => { mark('brc-wt'); choose(T.watch(), { prefix: PREFIX.WATCHED, close: false }); };
     $('brc-decline').onclick = () => {
       const rs = reasons();
       if (!rs.length) return toast('Отметь хотя бы одну причину');
-      choose(T.decline(rs), { prefix: PREFIX.DECLINE, close: true });
+      choose(T.decline(rs), { prefix: PREFIX.DECLINE, close: true, move: 'dec' });
     };
     $('brc-rework').onclick = () => {
       const rs = reasons();
       if (!rs.length) return toast('Отметь, что нужно исправить');
-      choose(T.rework(rs), { prefix: PREFIX.WATCHED, close: false });
+      choose(T.rework(rs), { prefix: PREFIX.WATCHED, close: false, move: 'rw' });
     };
     const rwno = $('brc-rwno');
-    if (rwno) rwno.onclick = () => choose(T.decline([`Тема не была исправлена в течение 24 часов после отправки на доработку (п. ${RULE.rw}).`]), { prefix: PREFIX.DECLINE, close: true });
+    if (rwno) rwno.onclick = () => choose(T.decline([`Тема не была исправлена в течение 24 часов после отправки на доработку (п. ${RULE.rw}).`]), { prefix: PREFIX.DECLINE, close: true, move: 'dec' });
   }
 
   /* ---------- запуск ---------- */
