@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BR Curator — Логи
 // @namespace    br-curator
-// @version      1.3.0
+// @version      2.0.0
 // @description  Сводка по логам Black Russia: игроки, поиск ботов, общие IP, подсветка, быстрые фильтры, отчёты
 // @author       Igor_Akentev
 // @match        https://logs.blackrussia.online/*
@@ -9,6 +9,7 @@
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-logs.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-logs.user.js
+// @note         2.0.0 — поиск ботов напрямую через API логов: сам качает все чаты за период (до 30 тыс. записей), без перезагрузки страницы; прогресс и «Стоп»
 // @note         1.3.0 — компактное меню ботов: поиск и фильтры сверху, периоды лентой, карточки меньше; мало сообщений = только «подозрение»
 // @note         1.2.0 — вкладка «Боты» в шапке сайта вместо кнопки, поиск ботов по периоду, фильтр списка, мобильный вид логов карточками, тема исправлена
 // @note         1.1.0 — новый дизайн панели (не ломается от стилей сайта), красивая таблица логов, плашка «Поиск ботов»
@@ -17,7 +18,7 @@
 
 (function () {
   'use strict';
-  const VERSION = '1.3.0';
+  const VERSION = '2.0.0';
   const ls = {
     get: (k, d) => { try { const v = localStorage.getItem('brcl_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set: (k, v) => { try { localStorage.setItem('brcl_' + k, JSON.stringify(v)); } catch (e) {} },
@@ -97,6 +98,11 @@
   #brl-sh .brl-sw{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid #222839}
   #brl-sh .brl-sw input{width:20px;height:20px;accent-color:#14b8a6}
   #brl-sh a{color:#5eead4}
+  #brl-sh .brl-src{display:flex;align-items:center;gap:8px;font-size:12px;color:#a5b4fc;margin:0 0 8px}
+  #brl-sh .brl-src .brl-b{margin-left:auto;padding:5px 9px;font-size:11.5px}
+  #brl-sh .brl-spin{width:34px;height:34px;margin:0 auto 12px;border-radius:50%;border:4px solid #262c3c;border-top-color:#14b8a6;animation:brlSp .8s linear infinite}
+  @keyframes brlSp{to{transform:rotate(360deg)}}
+  #brl-sh .brl-empty small b{color:#5eead4}
   #brl-sh{max-height:92dvh}
   #brl-sh .brl-hd{padding:6px 14px 8px}
   #brl-sh .brl-tabs{margin:0 14px 8px}
@@ -239,7 +245,6 @@
 
   // ---------- поиск ботов ----------
   function botScore(r) {
-    const ids = r.arr.map((g) => parseInt(g.pid, 10)).filter((n) => n > 0).sort((a, b) => a - b);
     r.arr.forEach((g) => {
       const why = []; let s = 0;
       const n = g.items.length;
@@ -269,27 +274,82 @@
       // 4. одинаковый текст у разных ников
       const clones = new Set(); texts.forEach((t) => (r.textNicks.get(t) || []).forEach((x) => x !== g.nick && clones.add(x)));
       if (clones.size) { s += 20; why.push('тот же текст пишут: ' + [...clones].slice(0, 4).join(', ')); }
-      // 5. IP
-      if (g.twins.size) { s += 15; why.push('общий IP с: ' + [...g.twins].join(', ')); }
-      else { const net = new Set(); g.ips.forEach((ip) => (r.netNicks.get(subnet(ip)) || []).forEach((x) => x !== g.nick && net.add(x)));
-        if (net.size) { s += 7; why.push('та же подсеть: ' + [...net].slice(0, 4).join(', ')); } }
-      // 6. пачка регистраций (ID рядом)
-      const id = parseInt(g.pid, 10);
-      if (id) { const near = ids.filter((x) => x !== id && Math.abs(x - id) <= 30).length;
-        if (near >= 1) { s += 10; why.push(`ID рядом с ещё ${pl(near, 'игроком', 'игроками', 'игроками')} (пачка регов)`); } }
       // 7. и в RP, и в NonRP одно и то же
       if (Object.keys(g.cats).length >= 2 && uniq < texts.length) { s += 5; why.push('дублирует в разные чаты'); }
-      if (texts.length < 5) s = Math.min(s, 50);
-      g.score = Math.min(100, s); g.why = why;
+      g.base = s; g.why = why; g.nt = texts.length;
+    });
+    // 2-й проход: IP, подсеть и ID подряд считаются только между теми, кто уже подозрителен сам по себе
+    // (на большом скане рядом по ID/подсети почти все — без этого был бы ложняк)
+    const susp = new Set(r.arr.filter((g) => g.base >= 15).map((g) => g.nick));
+    const sIds = r.arr.filter((g) => susp.has(g.nick)).map((g) => [g.nick, parseInt(g.pid, 10)]).filter(([, n]) => n > 0);
+    r.arr.forEach((g) => {
+      let s = g.base; const why = g.why;
+      if (susp.has(g.nick)) {
+        const tw = [...g.twins].filter((n) => susp.has(n));
+        if (tw.length) { s += 15; why.push('общий IP с: ' + tw.join(', ')); }
+        else { const net = new Set(); g.ips.forEach((ip) => (r.netNicks.get(subnet(ip)) || []).forEach((x) => x !== g.nick && susp.has(x) && net.add(x)));
+          if (net.size) { s += 7; why.push('та же подсеть: ' + [...net].slice(0, 4).join(', ')); } }
+        const id = parseInt(g.pid, 10);
+        if (id) { const near = sIds.filter(([n, x]) => n !== g.nick && Math.abs(x - id) <= 30).length;
+          if (near) { s += 10; why.push(`ID рядом с ещё ${pl(near, 'подозрительным', 'подозрительными', 'подозрительными')} (пачка регов)`); } }
+      }
+      if (g.nt < 5) s = Math.min(s, 50);
+      g.score = Math.min(100, s);
       g.lvl = g.score >= 55 ? 'bot' : g.score >= 30 ? 'sus' : '';
     });
     r.bots = r.arr.filter((g) => g.lvl === 'bot'); r.sus = r.arr.filter((g) => g.lvl === 'sus');
-    r.arr.forEach((g) => g.items.forEach((x) => {
-      x.tr.classList.toggle('bot', g.lvl === 'bot');
-      if (x.nkTd) { const old = x.nkTd.querySelector('.brl-bot-tag'); if (old) old.remove();
-        if (g.lvl) { const t = document.createElement('span'); t.className = 'brl-bot-tag ' + g.lvl; t.textContent = (g.lvl === 'bot' ? 'БОТ ' : '? ') + g.score + '%'; x.nkTd.appendChild(t); } }
-    }));
   }
+  // метки «БОТ» в таблице сайта — по нику, откуда бы ни пришли данные
+  function tagTable(dom, r) {
+    if (!dom) return; const by = new Map(r ? r.arr.map((g) => [g.nick, g]) : []);
+    dom.forEach((x) => { const g = by.get(x.nick); const lvl = g ? g.lvl : '';
+      x.tr.classList.toggle('bot', lvl === 'bot');
+      if (x.nkTd) { const old = x.nkTd.querySelector('.brl-bot-tag'); if (old) old.remove();
+        if (lvl) { const t = document.createElement('span'); t.className = 'brl-bot-tag ' + lvl; t.textContent = (lvl === 'bot' ? 'БОТ ' : '? ') + g.score + '%'; x.nkTd.appendChild(t); } } });
+  }
+
+  // ---------- API сайта логов (тот же, что использует сама страница) ----------
+  const SRV = (location.pathname.match(/\/gslogs\/(\d+)/) || [])[1] || '49';
+  const CAT_N = { 52: 'Семейный чат', 53: 'Чат объявлений', 54: 'Чат', 55: 'Чат', 56: 'ЛС', 58: 'Чат ask', 42: 'СМС' };
+  const chatCats = () => ls.get('chatCats', [54, 55, 53]);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const Api = {
+    gap: 1300, last: 0, stop: false,
+    async page(params, offset, tries = 0) {
+      const w = this.gap - (Date.now() - this.last); if (w > 0) await sleep(w);
+      const q = new URLSearchParams(params); q.set('order_by', 'time'); q.set('offset', String(offset)); q.set('auto', 'false');
+      if (!ls.get('noLimit', false)) q.set('limit', '2000');
+      let r; try { r = await fetch(`/gslogs/${SRV}/api/list-game-logs/?${q}`, { credentials: 'include' }); }
+      catch (e) { throw new Error('нет связи с сайтом логов'); } finally { this.last = Date.now(); }
+      if (r.status === 429 && tries < 5) { this.gap = Math.min(6000, this.gap * 1.6); await sleep(2500 * (tries + 1)); return this.page(params, offset, tries + 1); }
+      if (r.status === 400 && q.has('limit') && !tries) { ls.set('noLimit', true); return this.page(params, offset, 1); }
+      if (r.status >= 500 && tries < 1) { await sleep(1500); return this.page(params, offset, tries + 1); }
+      if (r.status === 401 || r.status === 403) throw new Error('сайт логов не пускает — проверь вход / доступ к категории');
+      if (!r.ok) throw new Error('сайт логов ответил ' + r.status);
+      let d; try { d = await r.json(); } catch (e) { throw new Error('пришла страница вместо данных — войди заново'); }
+      if (!Array.isArray(d)) d = (d && (d.results || d.data || d.items)) || [];
+      if (this.gap > 1300) this.gap = Math.max(1300, this.gap * 0.9);
+      return d;
+    },
+    async all(params, maxPages, onPage) {
+      const out = []; let off = 0;
+      for (let i = 0; i < maxPages; i++) {
+        if (this.stop) { out.capped = true; break; }
+        const d = await this.page(params, off); out.push(...d); if (onPage) onPage(i + 1, out.length);
+        if (!d.length) break; off += d.length;
+        if (i === maxPages - 1) out.capped = true;
+      }
+      return out;
+    },
+  };
+  const parseT = (v) => { if (typeof v === 'number') return v < 1e12 ? v * 1000 : v; const t = String(v || '').trim();
+    return /(Z|[+-]\d\d:?\d\d)$/i.test(t) ? Date.parse(t) : Date.parse(t.replace(' ', 'T') + '+03:00'); };
+  const fmtT = (ms) => { const d = new Date(ms + 3 * 3600e3), z = (n) => String(n).padStart(2, '0');
+    return `${z(d.getUTCDate())}/${z(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${z(d.getUTCHours())}:${z(d.getUTCMinutes())}:${z(d.getUTCSeconds())}`; };
+  const recToItem = (r) => { const ms = parseT(r.time) || 0;
+    return { tr: null, ms, time: ms ? fmtT(ms) : String(r.time || ''), cid: r.category_id,
+      cat: r.category_name || (r.category && r.category.name) || ls.get('catn', {})[r.category_id] || CAT_N[r.category_id] || 'Кат. ' + r.category_id,
+      nick: r.player_name || '', pid: r.player_id == null ? '' : String(r.player_id), ip: r.player_ip || '', text: norm(r.transaction_desc) }; };
 
   // ---------- подсветка ----------
   function currentWord() { const td = new URL(location.href).searchParams.get('td') || ''; return td.replace(/%/g, '').trim(); }
@@ -343,7 +403,7 @@
   mountTab();
   const ov = document.createElement('div'); ov.id = 'brl-ov'; document.body.appendChild(ov);
   const sh = document.createElement('div'); sh.id = 'brl-sh'; document.body.appendChild(sh);
-  let tab = 'bots', data = null, gr = null, bf = '', bl = 'all';
+  let tab = 'bots', data = null, gr = null, bf = '', bl = 'all', src = null, scanning = null;
   sh.addEventListener('input', (e) => { if (e.target.id !== 'brl-bf') return; bf = e.target.value; const pos = e.target.selectionStart; draw();
     const i = document.getElementById('brl-bf'); i.focus(); i.setSelectionRange(pos, pos); });
   const close = () => { sh.classList.remove('on'); ov.classList.remove('on'); };
@@ -351,14 +411,42 @@
   const open = (t) => { if (t) tab = t; refresh(); draw(); sh.classList.add('on'); ov.classList.add('on'); };
   fab.onclick = (e) => { e.preventDefault(); e.stopPropagation(); open('bots'); };
 
-  function refresh() { data = parse(); gr = data ? group(data) : null; if (data) highlight(data); badge(); }
+  function refresh() {
+    const dom = parse(); if (dom) highlight(dom);
+    if (src) { data = src.items; gr = group(data); } else { data = dom; gr = data ? group(data) : null; }
+    tagTable(dom, gr); badge();
+  }
+  async function scan(hours, word) {
+    if (scanning) return;
+    const cats = chatCats(); Api.stop = false;
+    const base = { time__gte: new Date(Date.now() - hours * 3600e3).toISOString(), time__lte: new Date(Date.now() + 60e3).toISOString() };
+    if (word) base.transaction_desc__ilike = '%' + word + '%';
+    const lbl = (hours < 1 ? Math.round(hours * 60) + ' мин' : hours + ' ч') + (word ? ` · «${word}»` : '');
+    scanning = { lbl, n: 0, cat: '' }; tab = 'bots'; draw();
+    const items = []; let capped = false;
+    try {
+      for (const c of cats) {
+        if (Api.stop) { capped = true; break; }
+        const rows = await Api.all({ ...base, category_id__exact: c }, 15, (pg, n) => { scanning.n = items.length + n; scanning.cat = CAT_N[c] ? CAT_N[c] + ' #' + c : '#' + c; prog(); });
+        if (rows.capped) capped = true; items.push(...rows.map(recToItem));
+      }
+      items.sort((a, b) => b.ms - a.ms);
+      src = { lbl, items, capped, cats }; scanning = null; bl = 'all'; refresh(); draw();
+      toast(`Проверено ${pl(items.length, 'запись', 'записи', 'записей')}`);
+    } catch (e) {
+      scanning = null; draw(); toast('Ошибка: ' + e.message);
+      const el = sh.querySelector('.brl-bd'); if (el) el.insertAdjacentHTML('afterbegin', `<div class="brl-c bot">⚠️ ${esc(e.message)}<div class="brl-row2">${B('legacy', 'Открыть через таблицу')}${B('x', 'Закрыть')}</div></div>`);
+      scan.lastH = hours;
+    }
+  }
+  function prog() { const el = document.getElementById('brl-prog'); if (el && scanning) el.innerHTML = `${esc(scanning.cat)} · загружено <b>${scanning.n}</b>`; }
   function badge() {
     const n = gr ? gr.arr.length : 0, b = gr ? gr.bots.length : 0;
     const s = gr ? gr.sus.length : 0; fab.classList.toggle('ok', !b && !s);
     fab.innerHTML = '🤖 Боты' + (gr ? `<span class="brl-hn">${b + s}</span>` : '');
   }
 
-  const sel = '[data-a],[data-t],[data-h],[data-w],[data-bh],[data-bl]';
+  const sel = '[data-a],[data-t],[data-h],[data-w],[data-bh],[data-bl],[data-sw]';
   const B = (a, t, cls = '', extra = '') => `<button class="brl-b ${cls}" data-a="${a}" ${extra}>${t}</button>`;
   function playerCard(g, i, botView) {
     const tags = [...g.ips].map((ip) => `<span class="brl-tag${gr.ipNicks.get(ip).size > 1 ? ' r' : ''}">${esc(ip)}</span>`).join('') +
@@ -378,7 +466,11 @@
   function draw() {
     const w = currentWord(); let body = '';
     const nb = gr ? gr.bots.length + gr.sus.length : 0;
-    if (tab !== 'flt' && !data) body = `<div class="brl-c">Не нашёл таблицу логов. Дождись загрузки и нажми ⟳. Не помогло — скинь скрин разработчику.</div>`;
+    if (scanning) body = `<div class="brl-empty"><div class="brl-spin"></div>🤖 Ищу ботов за ${esc(scanning.lbl)}…<small id="brl-prog">подключаюсь к логам…</small>
+      <div style="margin-top:14px">${B('stop', '⏹ Стоп — показать что есть', 'o')}</div><small>Сайт пускает 1 запрос в ~1,3 сек, на сутки может уйти минута</small></div>`;
+    else if (tab === 'bots' && (!data || !data.length)) body = `<div class="brl-scan" style="flex-wrap:wrap"><span>Искать ботов за</span>${[[0.5, '30м'], [1, '1ч'], [3, '3ч'], [6, '6ч'], [12, '12ч'], [24, '24ч']]
+      .map(([h, t]) => `<button class="brl-b" data-bh="${h}">${t}</button>`).join('')}</div><div class="brl-empty">Выбери период — скрипт сам загрузит чаты и найдёт ботов</div>`;
+    else if (tab !== 'flt' && !data) body = `<div class="brl-c">Не нашёл таблицу логов. Дождись загрузки и нажми ⟳. Не помогло — скинь скрин разработчику.</div>`;
     else if (tab !== 'flt' && !data.length) body = `<div class="brl-c">Пусто — по этим фильтрам строк нет.</div>`;
     else if (tab === 'sum') {
       const shared = [...gr.ipNicks.entries()].filter(([, s]) => s.size > 1);
@@ -393,12 +485,14 @@
       body += `<div class="brl-mut" style="text-align:center">Считаются только загруженные строки. Подгрузил ещё — жми ⟳.</div>`;
     } else if (tab === 'bots') {
       const q = bf.toLowerCase(), nn = gr.arr.length - nb;
+      body += src ? `<div class="brl-src">📡 Скан за ${esc(src.lbl)} · ${pl(src.items.length, 'запись', 'записи', 'записей')}${src.capped ? ' (не всё — упёрся в лимит)' : ''}<button class="brl-b" data-a="unsrc">✕ страница</button></div>`
+        : `<div class="brl-src">📄 Данные со страницы · ${pl(data.length, 'строка', 'строки', 'строк')}</div>`;
       body += `<div class="brl-stick"><input class="brl-in" id="brl-bf" placeholder="🔍 Ник, ID или IP" value="${esc(bf)}">
         <div class="brl-seg">${[['all', 'Все', nb], ['bot', 'Боты', gr.bots.length], ['sus', 'Подозр.', gr.sus.length], ['ok', 'Норм', nn]]
           .map(([k, t, n]) => `<button class="brl-b ${bl === k ? 'v' : ''} k-${k}" data-bl="${k}">${t}<i>${n}</i></button>`).join('')}</div></div>
         <div class="brl-scan"><span>Искать за</span>${[[0.5, '30м'], [1, '1ч'], [3, '3ч'], [6, '6ч'], [12, '12ч'], [24, '24ч']]
           .map(([h, t]) => `<button class="brl-b" data-bh="${h}">${t}</button>`).join('')}<span>реклама</span>${['тгк', 't.me', 'телег', '@', 'раздает', 'бесплатно', 'промо']
-          .map((x) => `<button class="brl-b o2" data-w="${esc(x)}" data-bot="1">${esc(x)}</button>`).join('')}</div>
+          .map((x) => `<button class="brl-b o2" data-sw="${esc(x)}">${esc(x)}</button>`).join('')}</div>
         <div class="brl-row2" style="margin:0 0 10px">${B('rbots', '📋 Отчёт по ботам', 'o')}${B('nbots', '👤 Ники ботов')}</div>`;
       const L = gr.arr.map((g, i) => [g, i]).filter(([g]) => (bl === 'all' ? g.lvl : bl === 'ok' ? !g.lvl : g.lvl === bl))
         .filter(([g]) => !q || (g.nick + ' ' + g.pid + ' ' + [...g.ips].join(' ')).toLowerCase().includes(q)).sort((a, b) => b[0].score - a[0].score);
@@ -415,6 +509,9 @@
         <label class="brl-lb">Сохранённые слова (через запятую)</label><input class="brl-in" id="brl-ws" value="${esc(words.join(', '))}">
         <label class="brl-lb">Что подсвечивать (пусто = слово из поиска)</label><input class="brl-in" id="brl-hl" value="${esc(ls.get('hl', ''))}">
         <div class="brl-sw" style="margin-top:12px"><span>✨ Красивая таблица логов</span><input type="checkbox" id="brl-pr" ${ls.get('pretty', true) ? 'checked' : ''}></div>
+        <label class="brl-lb">Категории чатов для поиска ботов (ID через запятую)</label><input class="brl-in" id="brl-cc" value="${esc(chatCats().join(', '))}">
+        <div class="brl-mut">54, 55 — чаты, 53 — объявления, 52 — семейный, 56 — ЛС, 58 — ask, 42 — СМС</div>
+        <label class="brl-lb">Поиск рекламы — за сколько часов</label><input class="brl-in" id="brl-ah" inputmode="numeric" value="${esc(ls.get('adH', 24))}">
         <div class="brl-sw"><span>📱 Логи карточками (для телефона)</span><input type="checkbox" id="brl-mb" ${mobOn() ? 'checked' : ''}></div>
         <div class="brl-row2">${B('save', 'Сохранить', 'p')}${B('x', 'Закрыть')}</div>
         <div class="brl-mut" style="margin-top:16px;text-align:center">BR Curator Логи v${VERSION} · <a href="https://vk.ru/igor_akentev" target="_blank">связь с разработчиком</a></div>`;
@@ -431,11 +528,15 @@
     const card = b.closest('.brl-c[data-i]'); const g = card && gr.arr[+card.dataset.i];
     if (b.dataset.t) { tab = b.dataset.t; draw(); return; }
     if (b.dataset.h) return period(+b.dataset.h);
-    if (b.dataset.bh) { sessionStorage.setItem('brl_open', 'bots'); return go({ td: null, tstart: String(Date.now() - b.dataset.bh * 3600e3), tend: String(Date.now() + 5 * 60e3) }); }
+    if (b.dataset.bh) return scan(+b.dataset.bh);
+    if (b.dataset.sw) return scan(ls.get('adH', 24), b.dataset.sw);
     if (b.dataset.bl) { bl = b.dataset.bl; draw(); return; }
     if (b.dataset.w) { if (b.dataset.bot) sessionStorage.setItem('brl_open', 'bots'); return searchWord(b.dataset.w); }
     switch (b.dataset.a) {
       case 'x': return close();
+      case 'stop': Api.stop = true; return toast('Останавливаю…');
+      case 'unsrc': src = null; refresh(); return draw();
+      case 'legacy': sessionStorage.setItem('brl_open', 'bots'); return go({ td: null, tstart: String(Date.now() - (scan.lastH || 1) * 3600e3), tend: String(Date.now() + 5 * 60e3) });
       case 'ref': refresh(); draw(); return toast('Обновлено');
       case 'bots': tab = 'bots'; return draw();
       case 'all': return copy(reportAll(gr));
@@ -447,8 +548,10 @@
       case 'nick': return filterNick(g.nick);
       case 'show': {
         document.querySelectorAll('tr.brl-pick').forEach((r) => r.classList.remove('brl-pick'));
-        g.items.forEach((x) => { x.tr.classList.add('brl-pick'); x.textTr && x.textTr.classList.add('brl-pick'); });
-        close(); g.items[0].tr.scrollIntoView({ behavior: 'smooth', block: 'center' }); return;
+        const rows = (parse() || []).filter((x) => x.nick === g.nick);
+        if (!rows.length) return toast('На странице его строк нет — жми «🔎 Логи»');
+        rows.forEach((x) => { x.tr.classList.add('brl-pick'); x.textTr && x.textTr.classList.add('brl-pick'); });
+        close(); rows[0].tr.scrollIntoView({ behavior: 'smooth', block: 'center' }); return;
       }
       case 'find': return searchWord(document.getElementById('brl-w').value);
       case 'clr': return searchWord('');
@@ -456,6 +559,8 @@
         ls.set('words', document.getElementById('brl-ws').value.split(',').map((s) => s.trim()).filter(Boolean));
         ls.set('hl', document.getElementById('brl-hl').value.trim());
         ls.set('mob', document.getElementById('brl-mb').checked); applyMob();
+        const cc = document.getElementById('brl-cc').value.split(/[^\d]+/).filter(Boolean).map(Number); if (cc.length) ls.set('chatCats', cc);
+        const ah = parseFloat(document.getElementById('brl-ah').value); if (ah > 0) ls.set('adH', Math.min(ah, 168));
         const pr = document.getElementById('brl-pr').checked; ls.set('pretty', pr); document.documentElement.classList.toggle('brl-pretty', pr);
         refresh(); draw(); return toast('Сохранено');
       }
