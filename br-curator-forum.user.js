@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.0.1
+// @version      5.0.2
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.0.2 — ID префиксов берутся из формы редактирования темы и подразделов; честная ошибка в очереди
 // @note         5.0.1 — ID префиксов определяются автоматически, видны в меню
 // @note         5.0.0 — кнопка «Следующая тема», счётчик просроченных на иконке, предпросмотр ответа, проверка OOC, контроль отчётов неоф. орг, общие причины команды
 // @note         4.1.0 — новое меню: статус обновлений, настройки (мгновенная отправка, таймеры, свёрнутая панель), сброс кэша
@@ -99,7 +100,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.0.1';
+  const VERSION = '5.0.2';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -158,9 +159,38 @@
     learnPrefixes(root);
     return out.sort((a, b) => a.left - b.left);
   }
+  const getDoc = async (url) => new DOMParser().parseFromString(await (await fetch(url, { credentials: 'same-origin' })).text(), 'text/html');
   async function fetchQueue(id) {
-    const r = await fetch(`/forums/${id}/`, { credentials: 'same-origin' });
-    return queueFromDoc(new DOMParser().parseFromString(await r.text(), 'text/html'));
+    const d = await getDoc(`/forums/${id}/`);
+    if (!d.querySelector('.structItem--thread, .js-threadList, .structItemContainer')) throw new Error('раздел не открылся');
+    return queueFromDoc(d);
+  }
+
+  // Поиск ID префиксов: форма редактирования темы + подразделы
+  const pfxDone = () => ['одобрен', 'отказ', 'рассмотр'].every((k) => Object.keys(ls.get('prefix_map', {})).some((x) => x.includes(k)));
+  async function findPrefixes() {
+    ls.set('pfx_try', Date.now());
+    const edits = [];
+    const cur = location.href.match(/^(https:\/\/forum\.blackrussia\.online\/threads\/[^/]+\.\d+\/)/);
+    if (cur) edits.push(cur[1] + 'edit');
+    for (const id of SEC_ORDER) {
+      if (pfxDone()) break;
+      try {
+        const d = await getDoc(`/forums/${id}/`);
+        learnPrefixes(d);
+        const th = d.querySelector('.structItem-title a[href*="/threads/"]:not(.labelLink)');
+        if (th) edits.push(new URL(th.getAttribute('href'), location.origin).href.replace(/(\/threads\/[^/]+\/).*/, '$1') + 'edit');
+        const subs = [...d.querySelectorAll('.node-title a[href*="/forums/"], .subNodeLink[href*="/forums/"]')].slice(0, 3);
+        for (const a of subs) { learnPrefixes(await getDoc(a.getAttribute('href'))); await wait(250); }
+      } catch {}
+      await wait(250);
+    }
+    for (const u of edits.slice(0, 3)) {
+      if (pfxDone()) break;
+      try { learnPrefixes(await getDoc(u)); } catch {}
+      await wait(250);
+    }
+    return pfxDone();
   }
 
   (function updater() {
@@ -307,15 +337,13 @@
     showPfx();
     pnl.querySelector('#brc-pfx-rf').onclick = async (e) => {
       e.stopPropagation();
-      pfxEl.innerHTML = '<div class="qe">Ищу на страницах разделов…</div>';
-      for (const id of SEC_ORDER) {
-        for (const sub of ['', '?prefix_id=0']) {
-          try { learnPrefixes(new DOMParser().parseFromString(await (await fetch(`/forums/${id}/${sub}`, { credentials: 'same-origin' })).text(), 'text/html')); } catch {}
-        }
-        await wait(300);
-      }
+      pfxEl.innerHTML = '<div class="qe">Ищу в разделах и в форме редактирования темы…</div>';
+      const ok = await findPrefixes();
       showPfx();
+      if (!ok) pfxEl.insertAdjacentHTML('beforeend', '<div class="qe" style="margin-top:6px">Открой любую тему из раздела и нажми «↻ найти» ещё раз — скрипт возьмёт ID из формы редактирования.</div>');
     };
+    // тихий автопоиск, если чего-то не хватает (не чаще раза в 6 ч)
+    if (!pfxDone() && Date.now() - ls.get('pfx_try', 0) > 6 * 3600e3) findPrefixes().then(showPfx);
 
     const say = (m) => { const b = pnl.querySelector('#brc-upd-st'); const old = b.innerHTML; b.innerHTML = m; setTimeout(() => (b.innerHTML = old), 1800); };
     pnl.querySelector('#brc-clr').onclick = () => {
