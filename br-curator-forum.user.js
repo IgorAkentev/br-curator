@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.3.0
+// @version      5.3.1
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.3.1 — имя вместо ника в заголовке био: предупреждение, а не нарушение; кэш сбрасывается при обновлении
 // @note         5.3.0 — новый дизайн панели проверки: единые иконки, рекомендуемое действие, списки замечаний; вторая одобренная био — предупреждение, а не нарушение
 // @note         5.2.2 — компактное меню со вкладками
 // @note         5.2.1 — верные ID префиксов по умолчанию (8/4/2), точные адреса разделов
@@ -105,7 +106,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.3.0';
+  const VERSION = '5.3.1';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -923,9 +924,11 @@
     const words = (text.match(/[A-Za-zА-Яа-яЁё0-9]+/g) || []).length;
 
     // Заголовок
-    res.push(sec.titleRe.test(title())
-      ? { s: 'ok', t: 'Заголовок по форме' }
-      : { s: 'fail', t: `Заголовок не по форме: «${title().slice(0, 50)}»`, r: `Заголовок темы оформлен не по форме. Правильно: «${sec.titleHint}».` });
+    if (sec.titleRe.test(title())) res.push({ s: 'ok', t: 'Заголовок по форме' });
+    else if (sec.key === 'bio' && /биография\s*[|│¦\/\\:\-–—]+\s*\S/i.test(title()))
+      res.push({ s: 'warn', t: `В заголовке не ник формата Имя_Фамилия: «${title().slice(0, 50)}»`,
+        r: `Заголовок темы оформлен не по форме — вместо игрового ника указано имя. Правильно: «${sec.titleHint}» (п. 1.1).` });
+    else res.push({ s: 'fail', t: `Заголовок не по форме: «${title().slice(0, 50)}»`, r: `Заголовок темы оформлен не по форме. Правильно: «${sec.titleHint}».` });
 
     // Объём
     if (sec.minWords) {
@@ -1741,7 +1744,7 @@
 
     const cacheKey = 'c_' + threadId;
     const cache = ls.get(cacheKey, null);
-    const fresh = cache && Date.now() - cache.ts < 30 * 60e3 && cache.len === text.length;
+    const fresh = cache && Date.now() - cache.ts < 30 * 60e3 && cache.len === text.length && cache.v === VERSION;
     const swap = (from, to) => { const i = checks.indexOf(from); if (i >= 0) { if (to) checks[i] = to; else checks.splice(i, 1); } render(); };
     const safe = async (fn) => {
       try { return await fn(); }
@@ -1754,7 +1757,7 @@
       if (sec.key !== 'sit') { dup = await safe(dupCheck); swap(LOAD_DUP, dup); await sleep(2500); }
       copy = await safe(copyCheck);
       const okToCache = (x) => !x || !/подождать|не сработал/.test(x.t);
-      if (okToCache(dup) && okToCache(copy)) ls.set(cacheKey, { ts: Date.now(), len: text.length, dup, copy });
+      if (okToCache(dup) && okToCache(copy)) ls.set(cacheKey, { ts: Date.now(), len: text.length, dup, copy, v: VERSION });
     }
     if (sec.key !== 'sit') swap(LOAD_DUP, dup);
     swap(LOAD_COPY, copy);
