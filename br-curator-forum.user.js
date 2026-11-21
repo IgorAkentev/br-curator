@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.5.3
+// @version      5.6.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.6.0 — таймер 24 ч в подразделах «на доработке», доработки в очереди меню и в счётчике
 // @note         5.5.3 — тема: выбор префикса и второстепенные кнопки в тёмном стиле
 // @note         5.5.2 — меню выезжает снизу шторкой и не обрезается; шестерёнка меньше и бледнеет при прокрутке
 // @note         5.5.1 — тема: убран серый фон строк разделов, бирюзовые иконки разделов
@@ -206,7 +207,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.5.3';
+  const VERSION = '5.6.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -404,7 +405,7 @@
       const nm = a.textContent.replace(/\s+/g, ' ').trim();
       const n = nm.toLowerCase();
       if (!id || id === secId) return;
-      const v = { id: +id, name: nm };
+      const v = { id: +id, name: nm, url: new URL(href, location.origin).pathname };
       if (/неодобр|отказ|отклон/.test(n)) { t.dec = v; found = true; }
       else if (/доработ/.test(n)) { t.rw = v; found = true; }
       else if (/распущ|архив|закрыт/.test(n)) { t.arc = v; found = true; }
@@ -455,6 +456,34 @@
     learnMoves(d, String(id));
     if (!d.querySelector('.structItem--thread, .js-threadList, .structItemContainer')) throw new Error('раздел не открылся');
     return queueFromDoc(d);
+  }
+
+  // Подраздел «на доработке»: 24 ч от последнего ответа куратора
+  function reworkFromDoc(root) {
+    const now = Date.now() / 1000;
+    const out = [];
+    root.querySelectorAll('.structItem--thread').forEach((it) => {
+      if (it.querySelector('.structItem-status--locked')) return;
+      const pref = (it.querySelector('.structItem-title .label')?.textContent || '').trim();
+      if (/одобрен|отказ|закрыт/i.test(pref)) return;
+      const times = [...it.querySelectorAll('[data-time]')].map((t) => +t.getAttribute('data-time')).filter(Boolean);
+      if (!times.length) return;
+      const users = [...it.querySelectorAll('.username')].map((u) => u.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      const author = (it.getAttribute('data-author') || users[0] || '').trim();
+      const lastUser = users[users.length - 1] || '';
+      const last = Math.max(...times), first = Math.min(...times);
+      const a = [...it.querySelectorAll('.structItem-title a[href*="/threads/"]')].pop();
+      const st = last === first ? 'none' : lastUser && author && lastUser === author ? 'fixed' : 'wait';
+      const leftMin = Math.floor((last + 24 * 3600 - now) / 60);
+      out.push({ it, href: a ? new URL(a.getAttribute('href'), location.origin).href : '', st, leftMin, left: leftMin <= 0 ? 0 : Math.ceil(leftMin / 60) });
+    });
+    return out;
+  }
+  const reworkTarget = (secId) => (ls.get('move_map', {})[secId] || {}).rw;
+  async function fetchRework(secId) {
+    const t = reworkTarget(secId);
+    if (!t) return null;
+    return reworkFromDoc(await getDoc(t.url || `/forums/${t.id}/`));
   }
 
   // Поиск ID префиксов: форма редактирования темы + подразделы
@@ -807,6 +836,11 @@
             secs[id] = { total: q.length, late: q.filter((x) => x.left <= 0).length, soon: q.filter((x) => x.left > 0 && x.left <= 24).length };
           } catch { secs[id] = null; }
           await wait(400);
+          try {
+            const rw = await fetchRework(id);
+            if (rw) secs[id].rw = { total: rw.length, late: rw.filter((x) => x.st === 'wait' && x.left <= 0).length, fixed: rw.filter((x) => x.st === 'fixed').length };
+          } catch {}
+          await wait(300);
         }
         c = { ts: Date.now(), secs };
         ls.set('q_cache', c);
@@ -815,10 +849,13 @@
       qEl.innerHTML = SEC_ORDER.map((id) => [id, SECTIONS[id]]).map(([id, sc]) => {
         const x = c.secs[id];
         if (!x) return `<div class="qrow"><span class="nm2">${sc.name}</span><span class="qe">не загрузилось</span></div>`;
-        late += x.late;
+        late += x.late + (x.rw ? x.rw.late : 0);
+        const rwT = reworkTarget(id);
         return `<a class="qrow" href="${secUrl(id)}"><span class="nm2">${sc.name}</span>
           ${x.late ? `<span class="ql">🔥 ${x.late}</span>` : ''}${x.soon ? `<span class="qs">⏳ ${x.soon}</span>` : ''}
-          <span class="qn">${x.total}</span></a>`;
+          <span class="qn">${x.total}</span></a>` + (x.rw && x.rw.total ? `<a class="qrow" style="margin-left:14px" href="${rwT.url || `/forums/${rwT.id}/`}"><span class="nm2" style="font-weight:600">🛠 на доработке</span>
+          ${x.rw.late ? `<span class="ql">⏱ ${x.rw.late}</span>` : ''}${x.rw.fixed ? `<span class="qs" style="background:#40c4d333;color:#7fdbe5">✏️ ${x.rw.fixed}</span>` : ''}
+          <span class="qn">${x.rw.total}</span></a>` : '');
       }).join('');
       const show = ls.get('q_badge', true) && late > 0;
       cntEl.style.display = show ? 'block' : 'none';
@@ -832,6 +869,43 @@
   })();
 
   /* ===================== 3. ОЧЕРЕДЬ НА СТРАНИЦЕ РАЗДЕЛА ===================== */
+
+  (function reworkPage() {
+    const m = location.pathname.match(/^\/forums\/(?:[^/]*\.)?(\d+)\/?/);
+    if (!m || !ls.get('queue', true)) return;
+    const mm = ls.get('move_map', {});
+    const isRw = Object.values(mm).some((t) => t.rw && String(t.rw.id) === m[1]) || /доработ/i.test(document.querySelector('.p-title-value')?.textContent || '');
+    if (!isRw || !document.querySelector('.structItem--thread')) return;
+    const st = document.createElement('style');
+    st.textContent = `
+      .brcq{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:12px;font:700 11px/18px -apple-system,Segoe UI,Roboto,sans-serif;vertical-align:middle;white-space:nowrap}
+      .brcq.g{background:#1ec27a22;color:#1ec27a}.brcq.y{background:#ffb54722;color:#ffb547}.brcq.r{background:#ff5468;color:#fff}.brcq.b{background:#3ec6d022;color:#3ec6d0}
+      .brcq-late{box-shadow:inset 3px 0 0 #ff5468}
+      #brcq-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0;padding:12px 14px;border-radius:14px;
+        background:#11181bf2;border:1px solid #ffb54755;color:#e6edf0;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 6px 18px #0006}
+      #brcq-bar b{font-size:15px}
+    `;
+    document.head.appendChild(st);
+    const data = reworkFromDoc(document);
+    for (const d of data) {
+      const c = document.createElement('span');
+      if (d.st === 'fixed') { c.className = 'brcq b'; c.textContent = '✏️ автор ответил — перепроверь'; }
+      else if (d.st === 'none') { c.className = 'brcq y'; c.textContent = '🛠 нет ответа куратора'; }
+      else if (d.left <= 0) { c.className = 'brcq r'; c.textContent = '⏱ время вышло → отказ'; d.it.classList.add('brcq-late'); }
+      else { c.className = 'brcq ' + (d.leftMin <= 360 ? 'y' : 'g'); c.textContent = `⏱ ${Math.floor(d.leftMin / 60)} ч ${d.leftMin % 60} мин на исправление`; }
+      (d.it.querySelector('.structItem-title') || d.it).appendChild(c);
+    }
+    const late = data.filter((d) => d.st === 'wait' && d.left <= 0).length;
+    const fixed = data.filter((d) => d.st === 'fixed').length;
+    const bar = document.createElement('div');
+    bar.id = 'brcq-bar';
+    bar.innerHTML = `<span>🛠 На доработке: <b>${data.length}</b></span>
+      <span style="color:#ff5468">⏱ Время вышло: <b>${late}</b></span>
+      <span style="color:#3ec6d0">✏️ Автор ответил: <b>${fixed}</b></span>`;
+    const first = document.querySelector('.structItem--thread');
+    const anchorEl = first.closest('.block') || first.parentElement;
+    anchorEl.parentElement.insertBefore(bar, anchorEl);
+  })();
 
   (function queue() {
     const mm0 = location.pathname.match(/^\/forums\/(?:[^/]*\.)?(\d+)\/?/);
