@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      6.1.1
+// @version      6.1.2
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         6.1.2 — «лишний пробел» и прочая типографика не считаются ошибками орфографии
 // @note         6.1.1 — в меню кнопка «Связь с разработчиком» (VK)
 // @note         6.1.0 — настоящая проверка орфографии (LanguageTool) с подсветкой ошибок; «Мой журнал» разобранных тем
 // @note         6.0.1 — пункты формы с опечатками («Настоящие время») засчитываются; причины прошлого отказа читаются и из строк через «•»
@@ -213,7 +214,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '6.1.1';
+  const VERSION = '6.1.2';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const GM_NOTES = (() => { try { return ((typeof GM_info !== 'undefined' && GM_info.scriptMetaStr) || '').match(/@note\s+.+/g).map((x) => x.replace(/@note\s+/, '')); } catch { return []; } })();
@@ -1621,7 +1622,8 @@
       try { ls.set(ck, { len: src.length, v: VERSION, m: matches }); } catch {}
     }
     // не считаем: ники, латиницу, имена с большой буквы, пробелы/типографику
-    ltErrors = matches.filter((m) => m.w && !/[A-Za-z_0-9]/.test(m.w) && !/^TYPOGRAPHY|^WHITESPACE|^STYLE/i.test(m.cat)
+    ltErrors = matches.filter((m) => m.w && !/[A-Za-z_0-9]/.test(m.w) && !/^TYPOGRAPHY|^WHITESPACE|^STYLE|^CASING/i.test(m.cat)
+      && !/пробел|повтор|стилист|кавычк|тире/i.test(m.msg || '')
       && !(m.cat === 'TYPOS' && /^[А-ЯЁ]/.test(m.w)));
     const words = (src.match(/[А-Яа-яЁё]+/g) || []).length || 1;
     const n = ltErrors.length;
