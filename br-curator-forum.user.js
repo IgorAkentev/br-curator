@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.4.2
+// @version      5.5.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.5.0 — тема оформления всего форума (вкл/выкл в настройках)
 // @note         5.4.2 — пункты формы ищутся без обязательного двоеточия; ник сравнивается по согласным (Ded_Bomer = Дед Бумер)
 // @note         5.4.1 — статус обновлений сохраняется между страницами
 // @note         5.4.0 — причины отказа подбираются автоматически и по подозрениям (метка «авто»)
@@ -26,11 +27,90 @@
 // @note         3.1.0 — плавающая кнопка: проверка и установка обновлений
 // @note         3.0.0 — проверки под правила разделов Хабаровска
 // @grant        none
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  /* ===================== ТЕМА ФОРУМА (грузится сразу, без мигания) ===================== */
+  const THEME_CSS = `
+    html.brc-theme{--bt-bg:#0c1113;--bt-card:#141b1e;--bt-card2:#192225;--bt-line:#ffffff10;--bt-txt:#e6edf0;--bt-mut:#8796a0;--bt-acc:#40c4d3;--bt-acc2:#22c58b}
+    html.brc-theme body,html.brc-theme .p-pageWrapper,html.brc-theme .p-body{background:var(--bt-bg)!important}
+    html.brc-theme .p-header,html.brc-theme .p-navSticky,html.brc-theme .p-nav,html.brc-theme .p-sectionLinks,html.brc-theme .p-staffBar{
+      background:#10171a!important;border-color:var(--bt-line)!important;box-shadow:0 1px 0 #ffffff08,0 8px 24px -12px #000c!important}
+    html.brc-theme .p-body-header{background:transparent!important}
+    html.brc-theme .p-title-value{font-weight:800!important;letter-spacing:-.015em}
+    html.brc-theme .p-description,html.brc-theme .p-body-header .p-description{color:var(--bt-mut)!important}
+    html.brc-theme .p-breadcrumbs a,html.brc-theme .p-breadcrumbs>li a{color:#9fd6dd!important}
+
+    html.brc-theme .block-container{background:var(--bt-card)!important;border:1px solid var(--bt-line)!important;border-radius:18px!important;
+      overflow:hidden;box-shadow:0 14px 34px -18px #000e!important}
+    html.brc-theme .block-header,html.brc-theme .block-minorHeader,html.brc-theme .block-filterBar,html.brc-theme .block-tabHeader,html.brc-theme .block-footer{
+      background:var(--bt-card2)!important;border-color:var(--bt-line)!important;color:var(--bt-txt)!important}
+    html.brc-theme .block-header{font-weight:800!important;letter-spacing:.01em}
+    html.brc-theme .block-body,html.brc-theme .block-row{border-color:var(--bt-line)!important}
+
+    html.brc-theme .node,html.brc-theme .structItem{background:transparent!important;border-color:var(--bt-line)!important;transition:background .15s}
+    html.brc-theme .node:hover,html.brc-theme .structItem:hover{background:#ffffff05!important}
+    html.brc-theme .node+.node,html.brc-theme .structItem+.structItem{border-top:1px solid var(--bt-line)!important}
+    html.brc-theme .node-icon i,html.brc-theme .node-icon .fa,html.brc-theme .node-icon svg{color:var(--bt-acc)!important}
+    html.brc-theme .node--read .node-icon i{color:#ffffff33!important}
+    html.brc-theme .node-title a,html.brc-theme .structItem-title a{color:var(--bt-txt)!important;font-weight:650!important}
+    html.brc-theme .node-stats,html.brc-theme .node-extra-date,html.brc-theme .structItem-minor,html.brc-theme .structItem-cell--meta{color:var(--bt-mut)!important}
+    html.brc-theme .structItem-status--sticky::before{color:var(--bt-acc)!important}
+
+    html.brc-theme .message{background:var(--bt-card)!important;border:1px solid var(--bt-line)!important;border-radius:18px!important;overflow:hidden;
+      margin-bottom:12px!important;box-shadow:0 14px 34px -20px #000e!important}
+    html.brc-theme .message-inner,html.brc-theme .message-cell{background:transparent!important;border-color:var(--bt-line)!important}
+    html.brc-theme .message-cell--user,html.brc-theme .message-userArrow{background:#11181b!important}
+    html.brc-theme .message-userArrow:after{border-right-color:#11181b!important}
+    html.brc-theme .message-attribution,html.brc-theme .message-lastEdit{color:var(--bt-mut)!important;border-color:var(--bt-line)!important}
+    html.brc-theme .message-footer,html.brc-theme .message-actionBar{border-color:var(--bt-line)!important}
+    html.brc-theme .bbWrapper{color:#dfe7ea}
+    html.brc-theme .bbCodeBlock,html.brc-theme .bbCodeBlock--quote{background:#0f1518!important;border:1px solid var(--bt-line)!important;border-left:3px solid var(--bt-acc)!important;border-radius:12px!important}
+    html.brc-theme .blockStatus,html.brc-theme .blockMessage{background:var(--bt-card2)!important;border:1px solid var(--bt-line)!important;border-radius:14px!important;color:var(--bt-txt)!important}
+
+    html.brc-theme .button,html.brc-theme a.button{border-radius:12px!important;transition:transform .12s,filter .15s}
+    html.brc-theme .button:active{transform:scale(.97)}
+    html.brc-theme .button--cta,html.brc-theme .button.button--cta,html.brc-theme .button--primary,html.brc-theme .p-title-pageAction .button{
+      background:linear-gradient(135deg,var(--bt-acc),var(--bt-acc2))!important;border:none!important;color:#04161a!important;font-weight:800!important;
+      box-shadow:0 10px 22px -10px #22c58bcc!important}
+    html.brc-theme .button--cta *,html.brc-theme .button--primary *{color:#04161a!important}
+
+    html.brc-theme .label{border-radius:7px!important;font-weight:700!important;padding:1px 8px!important}
+    html.brc-theme .label[class*="green"],html.brc-theme .label[class*="Green"]{background:#22c58b24!important;color:#3ee0a4!important;border:1px solid #22c58b55!important}
+    html.brc-theme .label[class*="red"],html.brc-theme .label[class*="Red"]{background:#ff5c6c24!important;color:#ff8d98!important;border:1px solid #ff5c6c55!important}
+    html.brc-theme .label[class*="orange"],html.brc-theme .label[class*="yellow"]{background:#ffb54724!important;color:#ffc56e!important;border:1px solid #ffb54755!important}
+    html.brc-theme .label[class*="blue"],html.brc-theme .label[class*="primary"],html.brc-theme .label[class*="accent"]{background:#40c4d324!important;color:#7fdbe5!important;border:1px solid #40c4d355!important}
+    html.brc-theme .badge,html.brc-theme .badgeContainer:after{border-radius:9px!important}
+
+    html.brc-theme .input,html.brc-theme input.input,html.brc-theme textarea.input,html.brc-theme select.input,html.brc-theme .fr-box,html.brc-theme .fr-wrapper,html.brc-theme .fr-toolbar{
+      background:#0f1517!important;border-color:#ffffff16!important;color:var(--bt-txt)!important}
+    html.brc-theme .input,html.brc-theme .fr-box{border-radius:12px!important}
+    html.brc-theme .input:focus,html.brc-theme .fr-box.is-focused{border-color:var(--bt-acc)!important;box-shadow:0 0 0 3px #40c4d322!important}
+
+    html.brc-theme .menu-content,html.brc-theme .offCanvasMenu-content,html.brc-theme .tooltip-content{background:#12191c!important;border:1px solid var(--bt-line)!important;border-radius:16px!important;color:var(--bt-txt)!important}
+    html.brc-theme .offCanvasMenu-content{border-radius:0 20px 20px 0!important}
+    html.brc-theme .offCanvasMenu-header,html.brc-theme .menu-header{background:#182226!important;border-color:var(--bt-line)!important}
+    html.brc-theme .offCanvasMenu-link,html.brc-theme .menu-linkRow{color:var(--bt-txt)!important;border-color:var(--bt-line)!important}
+    html.brc-theme .offCanvasMenu-link:hover,html.brc-theme .menu-linkRow:hover{background:#ffffff08!important}
+
+    html.brc-theme .pageNav-page,html.brc-theme .pageNav-jump{border-radius:10px!important;background:var(--bt-card2)!important;border-color:var(--bt-line)!important}
+    html.brc-theme .pageNav-page--current{background:var(--bt-acc)!important;color:#04161a!important;border-color:transparent!important}
+    html.brc-theme .p-footer,html.brc-theme .p-footer-inner,html.brc-theme .p-footer-copyrightRow{background:#0a0f11!important;border-color:var(--bt-line)!important}
+    html.brc-theme ::selection{background:#40c4d355}
+  `;
+  const themeOn = () => { try { return JSON.parse(localStorage.getItem('brc_theme') ?? 'true'); } catch { return true; } };
+  function applyTheme(on) {
+    const root = document.documentElement;
+    let st = document.getElementById('brc-theme-css');
+    if (!st) { st = document.createElement('style'); st.id = 'brc-theme-css'; st.textContent = THEME_CSS; (document.head || root).appendChild(st); }
+    root.classList.toggle('brc-theme', !!on);
+  }
+  applyTheme(themeOn());
+
+  const brcMain = () => {
 
   /* ===================== НАСТРОЙКИ ===================== */
 
@@ -109,7 +189,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.4.2';
+  const VERSION = '5.5.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -477,6 +557,7 @@
     fab.innerHTML = GEAR + '<span class="dot"></span><span class="cnt"></span>';
 
     const OPTS = [
+      ['theme', true, '🎨', 'Тема форума'],
       ['preview', true, '👁', 'Предпросмотр ответа'],
       ['auto_send', false, '⚡', 'Мгновенная отправка'],
       ['move', true, '📂', 'Переносить в подразделы'],
@@ -573,6 +654,7 @@
         if (o.dataset.k === 'min') document.getElementById('brc')?.classList.toggle('min', v);
         if (o.dataset.k === 'q_badge') refreshQueue();
         if (o.dataset.k === 'sig_on') drawSig();
+        if (o.dataset.k === 'theme') applyTheme(v);
       };
     });
 
@@ -1800,4 +1882,7 @@
     if (sec.key !== 'sit') swap(LOAD_DUP, dup);
     swap(LOAD_COPY, copy);
   })();
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', brcMain, { once: true });
+  else brcMain();
 })();
