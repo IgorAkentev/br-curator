@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.0.0
+// @version      5.0.1
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.0.1 — ID префиксов определяются автоматически, видны в меню
 // @note         5.0.0 — кнопка «Следующая тема», счётчик просроченных на иконке, предпросмотр ответа, проверка OOC, контроль отчётов неоф. орг, общие причины команды
 // @note         4.1.0 — новое меню: статус обновлений, настройки (мгновенная отправка, таймеры, свёрнутая панель), сброс кэша
 // @note         4.0.2 — фото по ссылке текстом засчитываются, фикс иконки
@@ -24,7 +25,12 @@
   /* ===================== НАСТРОЙКИ ===================== */
 
   // ID префиксов — ПРОВЕРЬ: "Редактировать тему" -> список префиксов -> value у option
-  const PREFIX = { ACCEPT: 8, DECLINE: 7, WATCHED: 9 };
+  // ID префиксов определяются автоматически по ссылкам префиксов на форуме; цифры ниже — запасные
+  const PREFIX = {
+    get ACCEPT() { return pfx('одобрен', 8); },
+    get DECLINE() { return pfx('отказ', 7); },
+    get WATCHED() { return pfx('рассмотр', 9); },
+  };
   const FONTS = /verdana|times new roman/i;
   const MIN_FONT_PX = 15;
 
@@ -93,7 +99,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.0.0';
+  const VERSION = '5.0.1';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -112,6 +118,29 @@
   const SEC_ORDER = ['2186', '2185', '2183'];
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // Автоопределение ID префиксов: ссылки вида ...?prefix_id=8 с текстом «Одобрено»
+  function learnPrefixes(root) {
+    const m = ls.get('prefix_map', {});
+    let ch = false;
+    const add = (id, t) => {
+      t = (t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (id && t && t.length < 40 && m[t] !== +id) { m[t] = +id; ch = true; }
+    };
+    root.querySelectorAll('a[href*="prefix_id"]').forEach((a) => {
+      const id = (decodeURIComponent(a.getAttribute('href')).match(/prefix_id(?:\[\d*\])?=(\d+)/) || [])[1];
+      add(id, a.textContent);
+    });
+    root.querySelectorAll('select[name="prefix_id"] option').forEach((o) => +o.value && add(o.value, o.textContent));
+    if (ch) ls.set('prefix_map', m);
+    return m;
+  }
+  function pfx(name, def) {
+    const m = ls.get('prefix_map', {});
+    const k = Object.keys(m).find((k) => k.includes(name));
+    return k ? m[k] : def;
+  }
+  learnPrefixes(document);
+
   // Очередь раздела: незакрытые темы без вердикта, самые горящие первыми
   function queueFromDoc(root) {
     const now = Date.now() / 1000;
@@ -126,6 +155,7 @@
       const href = new URL(a.getAttribute('href'), location.origin).href;
       out.push({ it, t, href, id: (href.match(/\.(\d+)\//) || [])[1], title: a.textContent.trim(), left: 72 - Math.floor((now - t) / 3600) });
     });
+    learnPrefixes(root);
     return out.sort((a, b) => a.left - b.left);
   }
   async function fetchQueue(id) {
@@ -237,6 +267,9 @@
       ${OPTS.map(([k, d, n, h]) => `<div class="opt ${ls.get(k, d) ? 'on' : ''}" data-k="${k}" data-d="${d}">
         <div class="tx">${n}<small>${h}</small></div><div class="sw"></div></div>`).join('')}
 
+      <div class="ttl">ПРЕФИКСЫ <button class="rf" id="brc-pfx-rf">↻ найти</button></div>
+      <div id="brc-pfx"></div>
+
       <div class="ttl">ИНСТРУМЕНТЫ</div>
       <div class="grid">
         <button class="btn" id="brc-clr">🧹 Сбросить кэш</button>
@@ -260,6 +293,29 @@
         if (o.dataset.k === 'q_badge') refreshQueue();
       };
     });
+
+    const pfxEl = pnl.querySelector('#brc-pfx');
+    function showPfx() {
+      const m = ls.get('prefix_map', {});
+      pfxEl.innerHTML = [['одобрен', 'Одобрено', '#1ec27a'], ['отказ', 'Отказано', '#ff5468'], ['рассмотр', 'На рассмотрении', '#ffb547']].map(([k, n, c]) => {
+        const key = Object.keys(m).find((x) => x.includes(k));
+        return `<div class="qrow"><span class="nm2" style="color:${c}">${n}</span>${key
+          ? `<span class="qn">ID ${m[key]}</span><span style="color:#1ec27a">✓</span>`
+          : `<span class="qe">не найден</span>`}</div>`;
+      }).join('');
+    }
+    showPfx();
+    pnl.querySelector('#brc-pfx-rf').onclick = async (e) => {
+      e.stopPropagation();
+      pfxEl.innerHTML = '<div class="qe">Ищу на страницах разделов…</div>';
+      for (const id of SEC_ORDER) {
+        for (const sub of ['', '?prefix_id=0']) {
+          try { learnPrefixes(new DOMParser().parseFromString(await (await fetch(`/forums/${id}/${sub}`, { credentials: 'same-origin' })).text(), 'text/html')); } catch {}
+        }
+        await wait(300);
+      }
+      showPfx();
+    };
 
     const say = (m) => { const b = pnl.querySelector('#brc-upd-st'); const old = b.innerHTML; b.innerHTML = m; setTimeout(() => (b.innerHTML = old), 1800); };
     pnl.querySelector('#brc-clr').onclick = () => {
@@ -766,6 +822,7 @@
   async function currentPrefix() {
     try {
       const d = parseDoc(await (await fetch(threadBase + 'edit', { credentials: 'same-origin' })).text());
+      learnPrefixes(d);
       return d.querySelector('select[name="prefix_id"] option[selected], input[name="prefix_id"]:checked')?.value || '';
     } catch { return ''; }
   }
