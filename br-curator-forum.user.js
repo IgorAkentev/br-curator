@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      4.0.0
+// @version      4.0.1
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         4.0.1 — новая иконка настроек, фикс дублей и таймера на рассмотренных темах
 // @note         4.0.0 — поиск копипаста и дублей, очередь с таймерами в разделах, контроль доработки 24ч, свои причины, подсветка в тексте
 // @note         3.2.0 — новый дизайн панели, починены ложные срабатывания (заголовок, имя, фото)
 // @note         3.1.0 — плавающая кнопка: проверка и установка обновлений
@@ -90,7 +91,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '4.0.0';
+  const VERSION = '4.0.1';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -108,9 +109,15 @@
   (function updater() {
     const st = document.createElement('style');
     st.textContent = `
-      #brc-fab{position:fixed;left:14px;bottom:90px;z-index:100001;width:46px;height:46px;border-radius:50%;border:none;
+      #brc-fab{position:fixed;left:14px;bottom:90px;z-index:100001;width:50px;height:50px;border-radius:16px;border:1px solid #ffffff30;
+        display:grid;place-items:center;padding:0;transition:transform .25s,box-shadow .25s;
         background:linear-gradient(135deg,#3ec6d0,#1ec27a);color:#fff;font-size:20px;box-shadow:0 6px 18px #1ec27a55;cursor:pointer}
-      #brc-fab .dot{position:absolute;top:2px;right:2px;width:12px;height:12px;border-radius:50%;background:#ff3c3c;display:none}
+      #brc-fab svg{width:26px;height:26px;transition:transform .5s}
+      #brc-fab.open svg{transform:rotate(90deg)}
+      #brc-fab:active{transform:scale(.92)}
+      #brc-fab .dot{position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:#ff5468;border:2px solid #11181b;display:none;
+        animation:brcpulse 1.4s infinite}
+      @keyframes brcpulse{0%{box-shadow:0 0 0 0 #ff546899}70%{box-shadow:0 0 0 8px #ff546800}100%{box-shadow:0 0 0 0 #ff546800}}
       #brc-upd{position:fixed;left:14px;bottom:144px;z-index:100001;width:270px;max-width:calc(100vw - 28px);padding:12px;
         border-radius:16px;background:#11181bf2;color:#e6edf0;border:1px solid #3ec6d055;box-shadow:0 10px 30px #000a;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;display:none;backdrop-filter:blur(6px)}
       #brc-upd b.v{color:#1ec27a}
@@ -124,7 +131,10 @@
 
     const fab = document.createElement('button');
     fab.id = 'brc-fab';
-    fab.innerHTML = '🛠<span class="dot"></span>';
+    fab.title = 'Скрипт кураторов';
+    fab.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+      <circle cx="12" cy="12" r="3"/></svg><span class="dot"></span>`;
     const pnl = document.createElement('div');
     pnl.id = 'brc-upd';
     pnl.innerHTML = `
@@ -136,7 +146,7 @@
       <button class="chk" id="brc-upd-chk">🔄 Проверить обновления</button>
     `;
     document.body.append(fab, pnl);
-    fab.onclick = () => (pnl.style.display = pnl.style.display === 'block' ? 'none' : 'block');
+    fab.onclick = () => { const o = pnl.style.display !== 'block'; pnl.style.display = o ? 'block' : 'none'; fab.classList.toggle('open', o); };
 
     const stEl = pnl.querySelector('#brc-upd-st');
     const notesEl = pnl.querySelector('#brc-upd-notes');
@@ -277,8 +287,9 @@
       return {
         id: (href.match(/\.(\d+)\//) || [])[1],
         href: href.replace(/(\/threads\/[^/]+\/).*/, '$1'),
-        title: a.textContent.replace(/\s+/g, ' ').trim(),
-        label: (li.querySelector('.contentRow-title .label')?.textContent || '').trim(),
+        title: (() => { const c = a.cloneNode(true); c.querySelectorAll('.label').forEach((x) => x.remove());
+          return c.textContent.replace(/\s+/g, ' ').replace(/^(Отказано|Одобрено|На рассмотрении|Закрыто)\s*/i, '').trim(); })(),
+        label: ((li.querySelector('.contentRow-title .label')?.textContent || '') + ' ' + a.textContent).trim(),
         minor: (li.querySelector('.contentRow-minor')?.textContent || '').replace(/\s+/g, ' ').trim(),
         user: (li.querySelector('.contentRow-minor .username')?.textContent || '').trim(),
       };
@@ -339,7 +350,9 @@
     const re = sec.key === 'bio' ? /биограф/i : /организац/i;
     const rows = searchResults(d).filter((x) => x.id !== threadId && re.test(x.minor + ' ' + x.title));
     if (!rows.length) return { s: 'ok', t: 'Дубли: других тем автора в разделе нет' };
-    const st = (x) => /одобрен/i.test(x.label + ' ' + x.minor) ? 'acc' : /отказ|закрыт/i.test(x.label + ' ' + x.minor) ? 'dec' : 'pend';
+    // префикс темы важнее названия подраздела
+    const st = (x) => /отказ|закрыт/i.test(x.label) ? 'dec' : /одобрен/i.test(x.label) ? 'acc'
+      : /отказ/i.test(x.minor) ? 'dec' : /одобрен/i.test(x.minor) ? 'acc' : 'pend';
     const acc = rows.find((x) => st(x) === 'acc');
     const pend = rows.find((x) => st(x) === 'pend');
     if (sec.key === 'bio' && acc) return { s: 'fail', t: `Уже есть одобренная био: «${acc.title}»`, link: acc.href,
@@ -777,9 +790,11 @@
     const verdict = fails.length ? `Найдено нарушений: ${fails.length}` : warns.length ? 'Проверь пару моментов' : loading.length ? 'Пока чисто…' : 'Можно одобрять';
     const RR = 26, C = 2 * Math.PI * RR;
 
-    const posted = qs('time.u-dt', firstMsg)?.getAttribute('data-time');
+    const statusTxt = (qs('.p-title-value .label')?.textContent || '') + ' ' + (qs('.p-breadcrumbs')?.textContent || '');
+    const doneSt = /отказ/i.test(statusTxt) ? 'Отказано' : /одобрен/i.test(statusTxt) ? 'Одобрено' : '';
+    const posted = doneSt ? null : qs('time.u-dt', firstMsg)?.getAttribute('data-time');
     const hours = posted ? Math.floor((Date.now() / 1000 - +posted) / 3600) : null;
-    const timer = hours == null ? '' : hours >= 72
+    const timer = doneSt ? `<span class="chip ${doneSt === 'Одобрено' ? 'g' : 'r'}">📁 Уже рассмотрена: ${doneSt}</span>` : hours == null ? '' : hours >= 72
       ? `<span class="chip late">⏱ просрочено (${hours} ч)</span>`
       : `<span class="chip t">⏱ осталось ${72 - hours} ч</span>`;
 
