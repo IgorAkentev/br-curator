@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BR Curator — Логи
 // @namespace    br-curator
-// @version      1.2.0
+// @version      1.3.0
 // @description  Сводка по логам Black Russia: игроки, поиск ботов, общие IP, подсветка, быстрые фильтры, отчёты
 // @author       Igor_Akentev
 // @match        https://logs.blackrussia.online/*
@@ -9,6 +9,7 @@
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-logs.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-logs.user.js
+// @note         1.3.0 — компактное меню ботов: поиск и фильтры сверху, периоды лентой, карточки меньше; мало сообщений = только «подозрение»
 // @note         1.2.0 — вкладка «Боты» в шапке сайта вместо кнопки, поиск ботов по периоду, фильтр списка, мобильный вид логов карточками, тема исправлена
 // @note         1.1.0 — новый дизайн панели (не ломается от стилей сайта), красивая таблица логов, плашка «Поиск ботов»
 // @note         1.0.0 — первая версия: сводка по игрокам, общие IP, подсветка слова, быстрые периоды, отчёт в буфер
@@ -16,7 +17,7 @@
 
 (function () {
   'use strict';
-  const VERSION = '1.2.0';
+  const VERSION = '1.3.0';
   const ls = {
     get: (k, d) => { try { const v = localStorage.getItem('brcl_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set: (k, v) => { try { localStorage.setItem('brcl_' + k, JSON.stringify(v)); } catch (e) {} },
@@ -96,6 +97,34 @@
   #brl-sh .brl-sw{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid #222839}
   #brl-sh .brl-sw input{width:20px;height:20px;accent-color:#14b8a6}
   #brl-sh a{color:#5eead4}
+  #brl-sh{max-height:92dvh}
+  #brl-sh .brl-hd{padding:6px 14px 8px}
+  #brl-sh .brl-tabs{margin:0 14px 8px}
+  #brl-sh .brl-bd{padding:0 14px 20px}
+  #brl-sh .brl-stick{position:sticky;top:0;z-index:2;background:#151924;padding:2px 0 8px;margin:0}
+  #brl-sh .brl-seg{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:8px}
+  #brl-sh .brl-seg .brl-b{padding:7px 2px;font-size:12px;display:flex;flex-direction:column;gap:1px}
+  #brl-sh .brl-seg .brl-b i{font-style:normal;font-size:15px;font-weight:800}
+  #brl-sh .brl-seg .k-bot i{color:#f87171}#brl-sh .brl-seg .k-sus i{color:#fcd34d}
+  #brl-sh .brl-seg .brl-b.v i{color:#fff}
+  #brl-sh .brl-scan{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;margin:0;scrollbar-width:none;align-items:center}
+  #brl-sh .brl-scan::-webkit-scrollbar{display:none}
+  #brl-sh .brl-scan span{flex:0 0 auto;color:#8b93a7;font-size:11.5px;font-weight:700;padding:0 2px 0 4px}
+  #brl-sh .brl-scan .brl-b{flex:0 0 auto;padding:7px 11px;border-radius:999px}
+  #brl-sh .brl-b.o2{background:#33240b;color:#fcd34d}
+  #brl-sh .brl-sc{flex:0 0 auto;border-radius:8px;padding:2px 8px;font:800 12px/1.4 system-ui}
+  #brl-sh .brl-sc.bot{background:#ef4444;color:#fff}#brl-sh .brl-sc.sus{background:#f59e0b;color:#1a1200}
+  #brl-sh .brl-cnt{background:#262c3c;color:#cbd5e1}
+  #brl-sh .brl-c{padding:11px 12px}
+  #brl-sh .brl-c.bot{border-color:#7f1d1d;background:linear-gradient(180deg,#2a1414,#1b2030 60%)}
+  #brl-sh .brl-c.sus{border-color:#713f12;background:linear-gradient(180deg,#261d0d,#1b2030 60%)}
+  #brl-sh .brl-why{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  #brl-sh .brl-why span{background:#11151f;border:1px solid #2a3142;border-radius:8px;padding:2px 7px;font-size:11.5px;color:#d1d5db}
+  #brl-sh .brl-acts .brl-b{padding:7px 4px;font-size:12px}
+  #brl-sh .brl-empty{text-align:center;padding:26px 10px;color:#e5e7eb;font-weight:700;font-size:15px}
+  #brl-sh .brl-empty small{display:block;color:#8b93a7;font-weight:500;font-size:12px;margin-top:4px}
+  #brl-sh .brl-help{color:#8b93a7;font-size:12px;margin-top:4px}
+  #brl-sh .brl-help summary{cursor:pointer;color:#a5b4fc;font-weight:600;padding:4px 0}
   #brl-toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:100001;background:#14b8a6;color:#042420;
     padding:10px 16px;border-radius:12px;font:700 14px system-ui;display:none;box-shadow:0 6px 18px rgba(0,0,0,.4)}
   mark.brl-hl{background:#facc15!important;color:#111!important;border-radius:4px;padding:0 3px}
@@ -250,7 +279,7 @@
         if (near >= 1) { s += 10; why.push(`ID рядом с ещё ${pl(near, 'игроком', 'игроками', 'игроками')} (пачка регов)`); } }
       // 7. и в RP, и в NonRP одно и то же
       if (Object.keys(g.cats).length >= 2 && uniq < texts.length) { s += 5; why.push('дублирует в разные чаты'); }
-      if (n === 1) s = Math.min(s, 45);
+      if (texts.length < 5) s = Math.min(s, 50);
       g.score = Math.min(100, s); g.why = why;
       g.lvl = g.score >= 55 ? 'bot' : g.score >= 30 ? 'sus' : '';
     });
@@ -333,15 +362,16 @@
   const B = (a, t, cls = '', extra = '') => `<button class="brl-b ${cls}" data-a="${a}" ${extra}>${t}</button>`;
   function playerCard(g, i, botView) {
     const tags = [...g.ips].map((ip) => `<span class="brl-tag${gr.ipNicks.get(ip).size > 1 ? ' r' : ''}">${esc(ip)}</span>`).join('') +
-      Object.entries(g.cats).map(([c, n]) => `<span class="brl-tag">${esc(c || '?')} · ${n}</span>`).join('') +
-      (g.lvl ? `<span class="brl-tag y">🤖 ${g.score}%</span>` : '');
+      Object.entries(g.cats).map(([c, n]) => `<span class="brl-tag">${esc(c || '?')} · ${n}</span>`).join('');
+    const sc = g.lvl ? `<span class="brl-sc ${g.lvl}">${g.score}%</span>` : '';
+    const t = g.items.map((x) => x.time.split(' ').pop()).filter(Boolean);
     return `<div class="brl-c ${g.lvl}" data-i="${i}">
-      <div class="brl-ln"><span class="brl-nick">${esc(g.nick)}</span><span class="brl-cnt">${g.items.length}</span></div>
-      <div class="brl-mut">ID ${esc(g.pid || '—')} · ${esc(span(g))}</div>
+      <div class="brl-ln"><span class="brl-nick">${esc(g.nick)}</span>${sc}<span class="brl-cnt" title="сообщений">💬 ${g.items.length}</span></div>
+      <div class="brl-mut">ID ${esc(g.pid || '—')} · ${esc(t.length > 1 ? t[t.length - 1] + '–' + t[0] : t[0] || '')}</div>
       <div class="brl-tags">${tags}</div>
-      ${botView && g.why.length ? `<div class="brl-meter"><i style="width:${g.score}%"></i></div><div class="brl-mut" style="margin-top:6px">• ${g.why.map(esc).join('<br>• ')}</div>`
+      ${botView && g.why.length ? `<div class="brl-why">${g.why.map((x) => `<span>${esc(x)}</span>`).join('')}</div>`
         : g.twins.size ? `<div class="brl-mut" style="color:#fca5a5">Общий IP с: ${[...g.twins].map(esc).join(', ')}</div>` : ''}
-      <div class="brl-acts">${B('open', '💬')}${B('one', '📋')}${B('nick', '🔎 Логи')}${B('show', '👁')}</div>
+      <div class="brl-acts">${B('open', '💬 Текст')}${B('one', '📋')}${B('nick', '🔎 Логи')}${B('show', '👁')}</div>
       <div class="brl-msgs">${g.items.map((x) => `<div><span class="brl-mut">${esc(x.time)} · ${esc(x.cat)}</span><br>${esc(x.text || '—')}</div>`).join('')}</div></div>`;
   }
 
@@ -362,23 +392,19 @@
       gr.arr.forEach((g, i) => (body += playerCard(g, i, false)));
       body += `<div class="brl-mut" style="text-align:center">Считаются только загруженные строки. Подгрузил ещё — жми ⟳.</div>`;
     } else if (tab === 'bots') {
-      body += `<div class="brl-c"><b>🔎 Искать ботов</b><div class="brl-mut">Загрузит все логи за период (без фильтра по тексту) и сразу проверит</div>
-        <div class="brl-grid" style="margin-top:8px">${[[0.5, '30 мин'], [1, '1 час'], [3, '3 часа'], [6, '6 часов'], [12, '12 часов'], [24, 'Сутки']]
-          .map(([h, t]) => `<button class="brl-b" data-bh="${h}">${t}</button>`).join('')}</div>
-        <div class="brl-mut" style="margin-top:8px">Или по рекламе:</div>
-        <div class="brl-chips">${['тгк', 't.me', 'телег', '@', 'раздает', 'бесплатно', 'промо'].map((x) => `<button class="brl-b" data-w="${esc(x)}" data-bot="1">${esc(x)}</button>`).join('')}</div></div>`;
-      body += `<div class="brl-c"><div class="brl-stat"><div class="brl-st"><b style="color:#ef4444">${gr.bots.length}</b><span>ботов</span></div>
-        <div class="brl-st"><b style="color:#fcd34d">${gr.sus.length}</b><span>подозрение</span></div><div class="brl-st"><b>${gr.arr.length - nb}</b><span>норм</span></div></div>
-        <div class="brl-row2">${B('rbots', '📋 Отчёт', 'o')}${B('nbots', 'Ники ботов')}</div></div>`;
-      body += `<input class="brl-in" id="brl-bf" placeholder="🔍 Ник, ID или IP…" value="${esc(bf)}">
-        <div class="brl-chips" style="margin:8px 0 10px">${[['all', 'Все'], ['bot', 'Боты'], ['sus', 'Подозрение'], ['ok', 'Норм']]
-          .map(([k, t]) => `<button class="brl-b ${bl === k ? 'v' : ''}" data-bl="${k}">${t}</button>`).join('')}</div><div id="brl-bl">`;
-      const q = bf.toLowerCase();
+      const q = bf.toLowerCase(), nn = gr.arr.length - nb;
+      body += `<div class="brl-stick"><input class="brl-in" id="brl-bf" placeholder="🔍 Ник, ID или IP" value="${esc(bf)}">
+        <div class="brl-seg">${[['all', 'Все', nb], ['bot', 'Боты', gr.bots.length], ['sus', 'Подозр.', gr.sus.length], ['ok', 'Норм', nn]]
+          .map(([k, t, n]) => `<button class="brl-b ${bl === k ? 'v' : ''} k-${k}" data-bl="${k}">${t}<i>${n}</i></button>`).join('')}</div></div>
+        <div class="brl-scan"><span>Искать за</span>${[[0.5, '30м'], [1, '1ч'], [3, '3ч'], [6, '6ч'], [12, '12ч'], [24, '24ч']]
+          .map(([h, t]) => `<button class="brl-b" data-bh="${h}">${t}</button>`).join('')}<span>реклама</span>${['тгк', 't.me', 'телег', '@', 'раздает', 'бесплатно', 'промо']
+          .map((x) => `<button class="brl-b o2" data-w="${esc(x)}" data-bot="1">${esc(x)}</button>`).join('')}</div>
+        <div class="brl-row2" style="margin:0 0 10px">${B('rbots', '📋 Отчёт по ботам', 'o')}${B('nbots', '👤 Ники ботов')}</div>`;
       const L = gr.arr.map((g, i) => [g, i]).filter(([g]) => (bl === 'all' ? g.lvl : bl === 'ok' ? !g.lvl : g.lvl === bl))
         .filter(([g]) => !q || (g.nick + ' ' + g.pid + ' ' + [...g.ips].join(' ')).toLowerCase().includes(q)).sort((a, b) => b[0].score - a[0].score);
-      if (!L.length) body += `<div class="brl-c">${q || bl !== 'all' ? 'Ничего не нашёл' : 'Чисто, ботов не видно 👌'}</div>`;
+      if (!L.length) body += `<div class="brl-empty">${q || bl !== 'all' ? '🤷 Ничего не нашёл' : '👌 Чисто, ботов не видно'}<small>${gr.arr.length} игроков проверено</small></div>`;
       L.forEach(([g, i]) => (body += playerCard(g, i, true)));
-      body += `</div><div class="brl-mut" style="margin-top:6px">Смотрю: повторы, рекламу/тг, скорость, одинаковый текст у разных ников, общий IP/подсеть, ID подряд. Проверяются только сообщения чатов. Это подсказка — решение за тобой.</div>`;
+      body += `<details class="brl-help"><summary>Как считается?</summary>Повторы текста, реклама/тг, скорость сообщений, одинаковый текст у разных ников, общий IP/подсеть, ID подряд (пачка регов). Только сообщения чатов. Меньше 5 сообщений — максимум «подозрение». Это подсказка — решение за тобой.</details>`;
     } else {
       const words = ls.get('words', ['br_banda', 't.me', 'тгк', 'telegram', 'discord']);
       body = `<label class="brl-lb">Период (от сейчас)</label><div class="brl-grid">${[[1, '1 час'], [3, '3 часа'], [12, '12 часов'], [24, 'Сутки'], [72, '3 дня'], [168, 'Неделя']]
