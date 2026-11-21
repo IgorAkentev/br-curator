@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      6.1.0
+// @version      6.1.1
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         6.1.1 — в меню кнопка «Связь с разработчиком» (VK)
 // @note         6.1.0 — настоящая проверка орфографии (LanguageTool) с подсветкой ошибок; «Мой журнал» разобранных тем
 // @note         6.0.1 — пункты формы с опечатками («Настоящие время») засчитываются; причины прошлого отказа читаются и из строк через «•»
 // @note         6.0.0 — «Взять» и кто взял тему, пакетная проверка раздела, галерея доказательств, быстрые ответы в любой теме, свои шаблоны и цвета ответов, экспорт/импорт настроек
@@ -212,7 +213,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '6.1.0';
+  const VERSION = '6.1.1';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const GM_NOTES = (() => { try { return ((typeof GM_info !== 'undefined' && GM_info.scriptMetaStr) || '').match(/@note\s+.+/g).map((x) => x.replace(/@note\s+/, '')); } catch { return []; } })();
@@ -740,6 +741,11 @@
       #brc-upd .say{position:sticky;bottom:0;margin-top:10px;padding:10px 12px;border-radius:12px;background:#40c4d3;color:#062326;font-weight:800;text-align:center;
         opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none}
       #brc-upd .say.on{opacity:1;transform:none}
+      #brc-upd .dev{display:flex;align-items:center;gap:12px;margin-top:14px;padding:11px 12px;border-radius:14px;background:#0077ff1a;border:1px solid #0077ff44;color:#e6edf0;text-decoration:none}
+      #brc-upd .dev .vk{width:34px;height:34px;flex:none;border-radius:10px;display:grid;place-items:center;background:#0077ff;color:#fff;font-weight:900;font-size:13px}
+      #brc-upd .dev b{display:block;font-size:13px}
+      #brc-upd .dev small{display:block;color:#8b9aa1;font-size:11px}
+      #brc-upd .dev .ar{margin-left:auto;color:#5ea8ff;font-weight:800}
       #brc-upd .ft{margin-top:10px;text-align:center;font-size:11px;color:#8b9aa1}
       #brc-upd .ft a{color:#3ec6d0;text-decoration:none;font-weight:700}
     `;
@@ -824,7 +830,8 @@
         </div>
       </div>
 
-      <div class="ft"><a href="https://github.com/IgorAkentev/br-curator" target="_blank">GitHub</a></div>
+      <a class="dev" href="https://vk.ru/igor_akentev" target="_blank" rel="noopener">
+        <span class="vk">VK</span><span><b>Связь с разработчиком</b><small>Igor_Akentev · баги, идеи, вопросы</small></span><span class="ar">↗</span></a>
     </div>`;
     const showTab = (t) => {
       pnl.querySelectorAll('.mt').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
