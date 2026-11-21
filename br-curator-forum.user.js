@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.5.0
+// @version      5.5.1
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.5.1 — тема: убран серый фон строк разделов, бирюзовые иконки разделов
 // @note         5.5.0 — тема оформления всего форума (вкл/выкл в настройках)
 // @note         5.4.2 — пункты формы ищутся без обязательного двоеточия; ник сравнивается по согласным (Ded_Bomer = Дед Бумер)
 // @note         5.4.1 — статус обновлений сохраняется между страницами
@@ -52,6 +53,13 @@
     html.brc-theme .block-body,html.brc-theme .block-row{border-color:var(--bt-line)!important}
 
     html.brc-theme .node,html.brc-theme .structItem{background:transparent!important;border-color:var(--bt-line)!important;transition:background .15s}
+    html.brc-theme .block-body,html.brc-theme .node-body,html.brc-theme .node-main,html.brc-theme .node-extra,html.brc-theme .node-stats,
+    html.brc-theme .node-meta,html.brc-theme .node-description,html.brc-theme .node-subNodesFlat,html.brc-theme .structItem-cell,
+    html.brc-theme .structItemContainer,html.brc-theme .structItemContainer-group,html.brc-theme .block-body>*{background:transparent!important;background-image:none!important}
+    html.brc-theme .node-body{border:none!important}
+    html.brc-theme .node-icon i::before,html.brc-theme .node-icon .fa::before,html.brc-theme .node-icon i:before{color:var(--bt-acc)!important}
+    html.brc-theme .node--read .node-icon i::before,html.brc-theme .node--read .node-icon i:before{color:#ffffff33!important}
+    html.brc-theme .node-extra-title a,html.brc-theme .node-extra-row a{color:var(--bt-txt)!important}
     html.brc-theme .node:hover,html.brc-theme .structItem:hover{background:#ffffff05!important}
     html.brc-theme .node+.node,html.brc-theme .structItem+.structItem{border-top:1px solid var(--bt-line)!important}
     html.brc-theme .node-icon i,html.brc-theme .node-icon .fa,html.brc-theme .node-icon svg{color:var(--bt-acc)!important}
@@ -189,7 +197,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.5.0';
+  const VERSION = '5.5.1';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
