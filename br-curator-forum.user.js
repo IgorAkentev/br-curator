@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.8.0
+// @version      6.0.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         6.0.0 — «Взять» и кто взял тему, пакетная проверка раздела, галерея доказательств, быстрые ответы в любой теме, свои шаблоны и цвета ответов, экспорт/импорт настроек
 // @note         5.8.0 — окно «Вышло обновление» с кнопками «Обновить» / «Напомнить позже», проверка каждые 30 минут, «что нового» после установки
 // @note         5.7.0 — досье автора, «что исправлено после прошлого отказа», уведомления о новых темах
 // @note         5.6.0 — таймер 24 ч в подразделах «на доработке», доработки в очереди меню и в счётчике
@@ -209,7 +210,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.8.0';
+  const VERSION = '6.0.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const GM_NOTES = (() => { try { return ((typeof GM_info !== 'undefined' && GM_info.scriptMetaStr) || '').match(/@note\s+.+/g).map((x) => x.replace(/@note\s+/, '')); } catch { return []; } })();
@@ -375,6 +376,38 @@
   // Подпись куратора в ответах
   const myNick = () => (document.querySelector('.p-navgroup-link--user .p-navgroup-linkText, .p-navgroup-user-linkText')?.textContent || '').trim();
   const SIG_DEF = 'С уважением, куратор форума {nick}';
+  // Свои шаблоны ответов и цвета вердиктов
+  const TPL_DEF = {
+    hello: 'Здравствуйте, {user}.',
+    ok: 'Требования соблюдены.',
+    no: 'Требования не соблюдены:',
+    rw: 'Тема оставлена на доработку. Необходимо исправить:',
+    watch: 'Ваша тема взята на рассмотрение. Ожидайте ответа.',
+  };
+  const tpl = (k) => ls.get('tpl_' + k, '') || TPL_DEF[k];
+  const COL_DEF = { ok: 'rgb(0, 200, 83)', no: 'rgb(255, 60, 60)', wait: 'rgb(255, 170, 0)' };
+  const col = (k) => ls.get('col_' + k, '') || COL_DEF[k];
+  const PALETTE = ['rgb(0, 200, 83)', 'rgb(30, 194, 122)', 'rgb(62, 198, 208)', 'rgb(64, 132, 255)', 'rgb(166, 107, 255)', 'rgb(255, 60, 60)', 'rgb(255, 120, 60)', 'rgb(255, 170, 0)', 'rgb(255, 215, 0)', 'rgb(139, 154, 161)'];
+  // Автор темы на текущей странице и приветствие с упоминанием
+  const pageAuthor = () => {
+    const u = document.querySelector('article.message .message-name .username');
+    return { name: (u?.textContent || 'игрок').trim(), id: document.querySelector('article.message .message-name [data-user-id]')?.getAttribute('data-user-id') };
+  };
+  const helloLine = (name, id) => `[CENTER]${tpl('hello').replaceAll('{user}', id ? `[USER=${id}]${name}[/USER]` : name)}[/CENTER]<br>`;
+  // Вставка текста в редактор быстрого ответа
+  function putReply(html) {
+    const fr = document.querySelector('.js-quickReply .fr-element') || document.querySelector('.fr-element');
+    if (fr) {
+      document.querySelector('.js-quickReply .fr-placeholder')?.remove();
+      fr.innerHTML = html.split('<br>').map((l) => `<p>${l || '<br>'}</p>`).join('');
+      fr.dispatchEvent(new Event('input', { bubbles: true }));
+      fr.focus();
+      return true;
+    }
+    const ta = document.querySelector('textarea[name="message"]');
+    if (ta) { ta.value = html.replaceAll('<br>', '\n'); return true; }
+    return false;
+  }
   const signature = () => ls.get('sig_on', false)
     ? `<br>[RIGHT][I][COLOR=${ls.get('sig_color', 'rgb(139, 154, 161)')}]${ls.get('sig_text', SIG_DEF).replaceAll('{nick}', myNick())}[/COLOR][/I][/RIGHT]` : '';
 
@@ -459,6 +492,31 @@
     learnMoves(d, String(id));
     if (!d.querySelector('.structItem--thread, .js-threadList, .structItemContainer')) throw new Error('раздел не открылся');
     return queueFromDoc(d);
+  }
+
+  function liteCheck(d, sc) {
+    const fm = d.querySelector('article.message');
+    const bb = fm && fm.querySelector('.bbWrapper');
+    if (bb) bb.querySelectorAll('br').forEach((b) => b.replaceWith('\n'));
+    const tx = bb ? bb.textContent : '';
+    const el = d.querySelector('.p-title-value');
+    let ttl = '';
+    if (el) { const c = el.cloneNode(true); c.querySelectorAll('.label, .labelLink').forEach((x) => x.remove()); ttl = c.textContent.replace(/\s+/g, ' ').trim(); }
+    const fails = [];
+    if (!sc.titleRe.test(ttl) && !(sc.key === 'bio' && /биография\s*[|│¦\/\\:\-–—]+\s*\S/i.test(ttl))) fails.push('заголовок');
+    const words = (tx.match(/[A-Za-zА-Яа-яЁё0-9]+/g) || []).length;
+    if (sc.minWords && (words < sc.minWords || words > sc.maxWords)) fails.push(`${words} слов`);
+    const miss = sc.fields.filter(([, re]) => !re.test(tx)).map(([n]) => n);
+    if (miss.length) fails.push(miss.length > 2 ? `нет ${miss.length} пунктов` : 'нет: ' + miss.join(', '));
+    if (sc.needMedia) {
+      const emb = fm ? fm.querySelectorAll('.message-body img:not(.smilie), .message-attachments img, .bbMediaWrapper, iframe, video').length : 0;
+      const urls = (tx.match(/https?:\/\/[^\s<>"']+/gi) || []).filter((u) => !/forum\.blackrussia/i.test(u)).length
+        + (bb ? [...bb.querySelectorAll('a[href^="http"]')].filter((a) => !/forum\.blackrussia/i.test(a.getAttribute('href'))).length : 0);
+      if (!emb && !urls) fails.push('нет фото');
+    }
+    const letters = tx.replace(/[^A-Za-zА-Яа-яЁё]/g, '');
+    if (letters && letters.replace(/[^A-ZА-ЯЁ]/g, '').length / letters.length > 0.3) fails.push('капс');
+    return fails;
   }
 
   // Подраздел «на доработке»: 24 ч от последнего ответа куратора
@@ -602,6 +660,13 @@
       #brc-upd .pane{margin-top:10px}
       #brc-upd .pane > .card{margin-top:0}
       #brc-upd .opt .oi{width:22px;text-align:center;font-size:15px}
+      #brc-upd .tplbox .tl{display:block;margin:8px 0 4px;font-size:12px;color:#8b9aa1;font-weight:700}
+      #brc-upd .tplbox .tl input{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:9px 11px;border-radius:9px;border:1px solid #ffffff22;background:#0b1012;color:#e6edf0;font-size:13px}
+      #brc-upd .tplbox .sigc{flex-wrap:wrap;margin:6px 0 4px}
+      #brc-upd .tplbox .sc{width:24px;height:24px}
+      #brc-upd .say{position:sticky;bottom:0;margin-top:10px;padding:10px 12px;border-radius:12px;background:#40c4d3;color:#062326;font-weight:800;text-align:center;
+        opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none}
+      #brc-upd .say.on{opacity:1;transform:none}
       #brc-upd .ft{margin-top:10px;text-align:center;font-size:11px;color:#8b9aa1}
       #brc-upd .ft a{color:#3ec6d0;text-decoration:none;font-weight:700}
     `;
@@ -624,7 +689,7 @@
       ['min', false, '▾', 'Свёрнутая панель'],
     ];
     const opt = ([k, d, ic, n]) => `<div class="opt ${ls.get(k, d) ? 'on' : ''}" data-k="${k}" data-d="${d}"><span class="oi">${ic}</span><div class="tx">${n}</div><div class="sw"></div></div>`;
-    const TABS = [['main', '🏠', 'Главное'], ['set', '⚙️', 'Настройки'], ['forum', '🧩', 'Форум'], ['sig', '✍️', 'Подпись']];
+    const TABS = [['main', '🏠', 'Главное'], ['set', '⚙️', 'Настройки'], ['forum', '🧩', 'Форум'], ['sig', '✍️', 'Ответы']];
 
     const pnl = document.createElement('div');
     pnl.id = 'brc-upd';
@@ -656,6 +721,8 @@
         <div class="grid" style="margin-top:8px">
           <button class="btn" id="brc-clr">🧹 Сбросить кэш</button>
           <button class="btn" id="brc-cust">🗑 Свои причины</button>
+          <button class="btn" id="brc-exp">📤 Экспорт</button>
+          <button class="btn" id="brc-imp">📥 Импорт</button>
         </div>
       </div>
 
@@ -671,6 +738,14 @@
           <div class="sigc">${['rgb(139, 154, 161)', 'rgb(62, 198, 208)', 'rgb(30, 194, 122)', 'rgb(255, 181, 71)', 'rgb(166, 107, 255)', 'rgb(255, 84, 104)'].map((c) => `<button class="sc" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
           <div class="sigpv" id="brc-sigpv"></div>
           <div class="qe">{nick} заменится на твой ник</div>
+        </div>
+        <div class="ttl">ШАБЛОНЫ ОТВЕТОВ</div>
+        <div class="sigbox tplbox">
+          ${[['hello', 'Приветствие ({user} — ник автора)'], ['ok', 'При одобрении'], ['no', 'При отказе (перед списком причин)'], ['rw', 'При доработке'], ['watch', 'При «Взять»']]
+            .map(([k, n]) => `<label class="tl">${n}<input data-tpl="${k}" placeholder="${TPL_DEF[k]}"></label>`).join('')}
+          ${[['ok', 'Цвет «одобрено»'], ['no', 'Цвет «отказано»'], ['wait', 'Цвет «рассмотрение / доработка»']]
+            .map(([k, n]) => `<div class="tl">${n}<div class="sigc">${PALETTE.map((c) => `<button class="sc" data-col="${k}" data-c="${c}" style="background:${c}"></button>`).join('')}</div></div>`).join('')}
+          <button class="btn" id="brc-tpl-reset">↺ Вернуть стандартные</button>
         </div>
       </div>
 
@@ -713,7 +788,47 @@
       sigPv.textContent = (sigIn.value || SIG_DEF).replaceAll('{nick}', myNick() || 'Ник');
     };
     sigIn.oninput = () => { ls.set('sig_text', sigIn.value); drawSig(); };
-    pnl.querySelectorAll('.sc').forEach((b) => (b.onclick = () => { ls.set('sig_color', b.dataset.c); drawSig(); }));
+    pnl.querySelectorAll('.sc:not([data-col])').forEach((b) => (b.onclick = () => { ls.set('sig_color', b.dataset.c); drawSig(); }));
+    // шаблоны ответов
+    const drawTpl = () => {
+      pnl.querySelectorAll('[data-tpl]').forEach((inp) => { if (document.activeElement !== inp) inp.value = ls.get('tpl_' + inp.dataset.tpl, ''); });
+      pnl.querySelectorAll('.sc[data-col]').forEach((b) => b.classList.toggle('on', col(b.dataset.col) === b.dataset.c));
+    };
+    pnl.querySelectorAll('[data-tpl]').forEach((inp) => (inp.oninput = () => ls.set('tpl_' + inp.dataset.tpl, inp.value.trim())));
+    pnl.querySelectorAll('.sc[data-col]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); ls.set('col_' + b.dataset.col, b.dataset.c); drawTpl(); }));
+    pnl.querySelector('#brc-tpl-reset').onclick = (e) => {
+      e.stopPropagation();
+      Object.keys(TPL_DEF).forEach((k) => ls.set('tpl_' + k, ''));
+      Object.keys(COL_DEF).forEach((k) => ls.set('col_' + k, ''));
+      drawTpl();
+    };
+    drawTpl();
+
+    // экспорт / импорт настроек
+    const VOLATILE = /^brc_(c_|known_ids|notif_ts|q_cache|last_check|remote_ver|upd_snooze|pfx_try|shared|menu_tab|last_ver|batch)/;
+    pnl.querySelector('#brc-exp').onclick = async (e) => {
+      e.stopPropagation();
+      const o = {};
+      Object.keys(localStorage).filter((k) => k.startsWith('brc_') && !VOLATILE.test(k)).forEach((k) => (o[k] = localStorage.getItem(k)));
+      const code = 'BRC1:' + btoa(unescape(encodeURIComponent(JSON.stringify(o))));
+      let copied = false;
+      try { await navigator.clipboard.writeText(code); copied = true; } catch {}
+      if (copied) say('📤 Код настроек скопирован');
+      else prompt('Скопируй код настроек:', code);
+    };
+    pnl.querySelector('#brc-imp').onclick = (e) => {
+      e.stopPropagation();
+      const code = (prompt('Вставь код настроек (начинается с BRC1:)') || '').trim();
+      if (!code) return;
+      try {
+        if (!code.startsWith('BRC1:')) throw 0;
+        const o = JSON.parse(decodeURIComponent(escape(atob(code.slice(5)))));
+        let n = 0;
+        Object.entries(o).forEach(([k, v]) => { if (k.startsWith('brc_')) { localStorage.setItem(k, v); n++; } });
+        say(`📥 Импортировано: ${n}. Перезагружаю…`);
+        setTimeout(() => location.reload(), 900);
+      } catch { say('❌ Код не подходит'); }
+    };
     drawSig();
     pnl.querySelector('#brc-rules-b').onclick = () => { setOpen(false); openRules((document.querySelector('.p-breadcrumbs a[href*=".2186/"]') && '2186') || (document.querySelector('.p-breadcrumbs a[href*=".2185/"]') && '2185') || (document.querySelector('.p-breadcrumbs a[href*=".2183/"]') && '2183') || (location.pathname.match(/(\d+)\/?$/) || [])[1]); };
 
@@ -764,7 +879,12 @@
     // тихий автопоиск, если чего-то не хватает (не чаще раза в 6 ч)
     if (!pfxDone() && Date.now() - ls.get('pfx_try', 0) > 6 * 3600e3) findPrefixes().then(showPfx);
 
-    const say = (m) => { const b = pnl.querySelector('#brc-upd-st'); const old = b.innerHTML; b.innerHTML = m; setTimeout(() => (b.innerHTML = old), 1800); };
+    const say = (m) => {
+      let t = pnl.querySelector('.say');
+      if (!t) { t = document.createElement('div'); t.className = 'say'; pnl.querySelector('.in').appendChild(t); }
+      t.textContent = m; t.classList.add('on');
+      clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('on'), 2200);
+    };
     pnl.querySelector('#brc-clr').onclick = () => {
       Object.keys(localStorage).filter((k) => k.startsWith('brc_c_')).forEach((k) => localStorage.removeItem(k));
       say('🧹 Кэш поиска очищен');
@@ -1062,11 +1182,13 @@
       .brcq{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:12px;font:700 11px/18px -apple-system,Segoe UI,Roboto,sans-serif;vertical-align:middle;white-space:nowrap}
       .brcq.g{background:#1ec27a22;color:#1ec27a}.brcq.y{background:#ffb54722;color:#ffb547}.brcq.r{background:#ff5468;color:#fff}.brcq.b{background:#3ec6d022;color:#3ec6d0}
       .brcq-late{box-shadow:inset 3px 0 0 #ff5468}
+      .brcq{max-width:100%;white-space:normal!important;line-height:1.35!important;padding:2px 8px!important}
       #brcq-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0;padding:12px 14px;border-radius:14px;
         background:#11181bf2;border:1px solid #3ec6d055;color:#e6edf0;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 6px 18px #0006}
       #brcq-bar b{font-size:15px}
       #brcq-bar .sp{flex:1}
-      #brcq-bar .rul{background:#ffffff14!important}
+      #brcq-bar .rul,#brcq-bar .chk{background:#ffffff14!important}
+      #brcq-bar .chk[disabled]{opacity:.8}
       #brcq-bar button{border:none;border-radius:10px;padding:8px 12px;font-weight:800;color:#fff;cursor:pointer;background:linear-gradient(135deg,#3ec6d0,#1ec27a)}
     `;
     document.head.appendChild(st);
@@ -1078,6 +1200,15 @@
     };
 
     const data = queueFromDoc(document);
+    // кто взял тему на рассмотрение — последний ответивший, если это не автор
+    document.querySelectorAll('.structItem--thread').forEach((it) => {
+      const pref = (it.querySelector('.structItem-title .label')?.textContent || '').trim();
+      if (!/рассмотр/i.test(pref)) return;
+      const users = [...it.querySelectorAll('.username')].map((u) => u.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      const author = (it.getAttribute('data-author') || users[0] || '').trim();
+      const last = users[users.length - 1];
+      if (last && users.length > 1 && last !== author) chip(it, 'b', `🙋 взял ${last.replace(/[^\wА-Яа-яЁё$ ._-]/g, '').trim()}`);
+    });
     for (const d of data) {
       chip(d.it, d.left <= 0 ? 'r' : d.left <= 24 ? 'y' : 'g', d.left <= 0 ? `⏱ просрочено на ${-d.left} ч` : `⏱ ${d.left} ч`);
       if (d.left <= 0) d.it.classList.add('brcq-late');
@@ -1101,12 +1232,34 @@
     bar.innerHTML = `<span>📋 В очереди: <b>${data.length}</b></span>
       <span style="color:#ff5468">🔥 Просрочено: <b>${late}</b></span>
       <span style="color:#ffb547">⏳ Меньше суток: <b>${soon}</b></span>
-      <span class="sp"></span><button class="rul">📖 Правила</button><button class="srt">⇅ По сроку</button>`;
+      <span class="sp"></span><button class="rul">📖 Правила</button><button class="chk">🔍 Проверить все</button><button class="srt">⇅ По сроку</button>`;
     const first = document.querySelector('.structItem--thread');
     const anchorEl = first.closest('.block') || first.parentElement;
     anchorEl.parentElement.insertBefore(bar, anchorEl);
 
     bar.querySelector('.rul').onclick = () => openRules(m[1]);
+    bar.querySelector('.chk').onclick = async (e) => {
+      const btn = e.currentTarget;
+      if (btn.disabled) return;
+      btn.disabled = true;
+      const list = data.slice(0, 20);
+      let i = 0, clean = 0;
+      for (const dd of list) {
+        btn.textContent = `🔍 ${++i}/${list.length}…`;
+        try {
+          const doc = await getDoc(dd.href);
+          const f = liteCheck(doc, SECTIONS[m[1]]);
+          const c = document.createElement('span');
+          c.className = 'brcq ' + (f.length ? 'r' : 'g');
+          c.textContent = f.length ? `❌ ${f.length}: ${f.join(' · ')}` : '✅ можно одобрять';
+          c.title = f.join(', ');
+          if (!f.length) clean++;
+          (dd.it.querySelector('.structItem-title') || dd.it).appendChild(c);
+        } catch {}
+        await wait(600);
+      }
+      btn.textContent = `✓ Чистых: ${clean}/${list.length}`;
+    };
     bar.querySelector('.srt').onclick = () => {
       const parent = data[0]?.it.parentElement;
       if (!parent) return;
@@ -1114,6 +1267,73 @@
       [...data].reverse().forEach((d) => { if (d.it.parentElement === parent) parent.prepend(d.it); });
       bar.querySelector('.srt').textContent = '✓ Отсортировано';
     };
+  })();
+
+  /* ===================== БЫСТРЫЕ ОТВЕТЫ (в любой теме) ===================== */
+
+  const QUICK_DEF = [
+    'Ожидайте ответа — тема находится на рассмотрении.',
+    'Вы ошиблись разделом. Создайте тему в соответствующем разделе форума.',
+    'Тема составлена не по форме. Ознакомьтесь с правилами раздела и создайте новую тему.',
+    'Ответ на ваш вопрос дан выше.',
+    'Тема закрыта.',
+  ];
+  (function quickReplies() {
+    const qr = document.querySelector('.js-quickReply');
+    if (!qr || !/\/threads\//.test(location.pathname)) return;
+    const st = document.createElement('style');
+    st.textContent = `
+      #brc-qk{display:flex;justify-content:flex-end;margin:8px 0}
+      #brc-qk button{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:12px;border:1px solid #40c4d355;background:#40c4d314;color:#7fdbe5;
+        font:700 13px -apple-system,Segoe UI,Roboto,sans-serif;cursor:pointer}
+      #brc-qs-bg{position:fixed;inset:0;z-index:100004;background:#0008;backdrop-filter:blur(2px)}
+      #brc-qs{position:fixed;left:8px;right:8px;bottom:8px;z-index:100005;max-width:460px;margin:0 auto;max-height:75vh;max-height:75dvh;overflow:auto;
+        padding:16px;border-radius:22px;background:#11181b;border:1px solid #40c4d355;box-shadow:0 -10px 50px #000c;color:#e6edf0;
+        font:14px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;animation:brcqs .25s cubic-bezier(.2,.9,.3,1)}
+      @keyframes brcqs{from{transform:translateY(30px);opacity:0}}
+      #brc-qs h4{margin:0 0 10px;font-size:16px;display:flex;align-items:center}
+      #brc-qs h4 button{margin-left:auto;width:32px;height:32px;border:none;border-radius:10px;background:#ffffff10;color:#e6edf0;cursor:pointer}
+      #brc-qs .q{display:flex;align-items:center;gap:8px;padding:11px 12px;border-radius:12px;background:#182125;margin-bottom:6px;cursor:pointer}
+      #brc-qs .q span{flex:1}
+      #brc-qs .q .d{background:none;border:none;color:#8796a0;font-size:18px;cursor:pointer}
+      #brc-qs .add{display:flex;gap:6px;margin-top:10px}
+      #brc-qs .add input{flex:1;min-width:0;padding:10px 12px;border-radius:11px;border:1px solid #ffffff16;background:#0b1013;color:#e6edf0}
+      #brc-qs .add button{width:42px;border:none;border-radius:11px;background:#40c4d3;color:#062326;font-size:20px;font-weight:800;cursor:pointer}
+      #brc-qs .ht{margin-top:8px;font-size:11px;color:#8796a0}
+    `;
+    document.head.appendChild(st);
+    const bar = document.createElement('div');
+    bar.id = 'brc-qk';
+    bar.innerHTML = '<button>⚡ Быстрые ответы</button>';
+    qr.parentElement.insertBefore(bar, qr);
+    const getQ = () => ls.get('quick', null) || QUICK_DEF.slice();
+    function open() {
+      close();
+      const bg = document.createElement('div'); bg.id = 'brc-qs-bg';
+      const sh = document.createElement('div'); sh.id = 'brc-qs';
+      const esc = (x) => x.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      sh.innerHTML = `<h4>⚡ Быстрые ответы<button class="x">✕</button></h4>
+        ${getQ().map((q, i) => `<div class="q" data-i="${i}"><span>${esc(q)}</span><button class="d" data-d="${i}" title="Удалить">×</button></div>`).join('')}
+        <div class="add"><input placeholder="Свой ответ…" maxlength="400"><button>＋</button></div>
+        <div class="ht">Тап по ответу — вставится в поле с приветствием${ls.get('sig_on', false) ? ' и подписью' : ''}. Отправляешь сам.</div>`;
+      document.body.append(bg, sh);
+      bg.onclick = close;
+      sh.querySelector('.x').onclick = close;
+      sh.querySelectorAll('.q').forEach((el) => (el.onclick = (e) => {
+        if (e.target.dataset.d != null) {
+          const q = getQ(); q.splice(+e.target.dataset.d, 1); ls.set('quick', q); open(); return;
+        }
+        const a = pageAuthor();
+        putReply(helloLine(a.name, a.id) + `[CENTER]${getQ()[+el.dataset.i]}[/CENTER]` + signature());
+        close();
+      }));
+      const inp = sh.querySelector('.add input');
+      const add = () => { const v = inp.value.trim(); if (!v) return; const q = getQ(); q.push(v); ls.set('quick', q); open(); };
+      sh.querySelector('.add button').onclick = add;
+      inp.onkeydown = (e) => { if (e.key === 'Enter') add(); };
+    }
+    function close() { document.getElementById('brc-qs')?.remove(); document.getElementById('brc-qs-bg')?.remove(); }
+    bar.querySelector('button').onclick = open;
   })();
 
   /* ===================== ДАЛЬШЕ — ТОЛЬКО В ТЕМАХ ===================== */
@@ -1507,18 +1727,18 @@
 
   /* ===================== ОТВЕТЫ ===================== */
 
-  const G = 'rgb(0, 200, 83)', R = 'rgb(255, 60, 60)', Y = 'rgb(255, 170, 0)';
-  const hello = `[CENTER]Здравствуйте, ${authorId ? `[USER=${authorId}]${author}[/USER]` : author}.[/CENTER]<br>`;
+  const G = col('ok'), R = col('no'), Y = col('wait');
+  const hello = helloLine(author, authorId);
   const list = (rs) => `[LIST]<br>${rs.map((r) => `[*]${r}`).join('<br>')}<br>[/LIST]<br>`;
 
   const T = {
-    accept: () => `${hello}[CENTER]Требования соблюдены.[/CENTER]<br>[CENTER][COLOR=${G}][B]${sec.what} одобрена.[/B][/COLOR][/CENTER]`
+    accept: () => `${hello}[CENTER]${tpl('ok')}[/CENTER]<br>[CENTER][COLOR=${G}][B]${sec.what} одобрена.[/B][/COLOR][/CENTER]`
       + (sec.key === 'org' ? `<br>[CENTER]Тема остаётся открытой — публикуйте отчёты о деятельности по форме. Если в течение недели от лидера не будет сообщений, организация будет считаться распущенной.[/CENTER]` : '') + signature(),
-    decline: (rs) => `${hello}[CENTER]Требования не соблюдены:[/CENTER]<br>${list(rs)}[CENTER][COLOR=${R}][B]${sec.what} отказана.[/B][/COLOR][/CENTER]` + signature(),
-    rework: (rs) => `${hello}[CENTER]Тема оставлена на доработку. Необходимо исправить:[/CENTER]<br>${list(rs)}[CENTER]На внесение изменений даётся 24 часа. Если тема не будет отредактирована за это время, она будет отказана.[/CENTER]<br>[CENTER][COLOR=${Y}][B]На доработке.[/B][/COLOR][/CENTER]` + signature(),
+    decline: (rs) => `${hello}[CENTER]${tpl('no')}[/CENTER]<br>${list(rs)}[CENTER][COLOR=${R}][B]${sec.what} отказана.[/B][/COLOR][/CENTER]` + signature(),
+    rework: (rs) => `${hello}[CENTER]${tpl('rw')}[/CENTER]<br>${list(rs)}[CENTER]На внесение изменений даётся 24 часа. Если тема не будет отредактирована за это время, она будет отказана.[/CENTER]<br>[CENTER][COLOR=${Y}][B]На доработке.[/B][/COLOR][/CENTER]` + signature(),
     dissolve: (days) => `${hello}[CENTER]В течение ${days} дней в теме не было отчётов от лидера о деятельности организации.[/CENTER]<br>[CENTER]Согласно п. 1.2 и 2.6 правил, организация считается распущенной, тема закрывается.[/CENTER]<br>[CENTER][COLOR=${R}][B]Организация распущена.[/B][/COLOR][/CENTER]` + signature(),
     remind: () => `${hello}[CENTER]Напоминаем: лидер обязан публиковать отчёты о деятельности организации по форме. Если в течение недели в теме не будет сообщений от лидера, организация будет считаться распущенной (п. 1.2).[/CENTER]<br>[CENTER][COLOR=${Y}][B]Ожидаем отчёт.[/B][/COLOR][/CENTER]` + signature(),
-    watch: () => `${hello}[CENTER]Ваша тема взята на рассмотрение. Ожидайте ответа.[/CENTER]<br>[CENTER][COLOR=${Y}][B]На рассмотрении.[/B][/COLOR][/CENTER]` + signature(),
+    watch: () => `${hello}[CENTER]${tpl('watch')}[/CENTER]<br>[CENTER][COLOR=${Y}][B]На рассмотрении.[/B][/COLOR][/CENTER]` + signature(),
   };
 
   /* ===================== ДЕЙСТВИЯ ===================== */
@@ -1684,6 +1904,13 @@
     #brc .ok .fx{color:var(--g)}#brc .fail .fx{color:var(--r)}#brc .warn .fx{color:var(--y)}
     #brc .sh a.cnt{text-decoration:none;color:var(--b)}
     #brc .sh a.cnt svg.i{width:13px;height:13px}
+    #brc .gal{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+    #brc .gi{aspect-ratio:1;border-radius:12px;border:1px solid var(--line);background:#0b1013 center/cover no-repeat;cursor:pointer;padding:0}
+    #brc .gl{grid-column:span 2;display:flex;align-items:center;gap:6px;padding:9px 10px;border-radius:12px;background:var(--card2);border:1px solid var(--line);color:var(--b);text-decoration:none;font-size:12px;font-weight:700;min-width:0}
+    #brc .gl span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #brc-lb{position:fixed;inset:0;z-index:100008;background:#000e;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px}
+    #brc-lb img{max-width:100%;max-height:80vh;border-radius:12px;box-shadow:0 20px 60px #000}
+    #brc-lb a{color:#7fdbe5;font:700 14px -apple-system,Segoe UI,Roboto,sans-serif;text-decoration:none;padding:10px 16px;border-radius:12px;background:#ffffff14}
     #brc .okl{display:none}#brc .okl.open{display:block}
     #brc .sh .cnt{display:inline-flex;align-items:center;gap:4px;color:var(--b);text-transform:none;letter-spacing:0;font-weight:700}
 
@@ -1924,6 +2151,49 @@
     qs('#brc-rem', box).onclick = () => choose(T.remind(), { close: false, sticky: true });
   }
 
+  /* ---------- кто уже взял тему ---------- */
+  const takenBy = (() => {
+    if (!/рассмотр/i.test(qs('.p-title-value .label')?.textContent || '')) return null;
+    const me = myNick();
+    const msgs = [...document.querySelectorAll('article.message')].slice(1);
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      const who = (qs('.message-name .username', m)?.textContent || '').trim();
+      if (!who || who === author) continue;
+      if (!/рассмотрени|взял/i.test(qs('.bbWrapper', m)?.innerText || '')) continue;
+      if (me && who.startsWith(me)) return null;
+      const t = +(qs('time.u-dt', m)?.getAttribute('data-time') || 0);
+      return { who, h: t ? Math.floor((Date.now() / 1000 - t) / 3600) : null };
+    }
+    return null;
+  })();
+
+  /* ---------- галерея доказательств ---------- */
+  const gallery = (() => {
+    if (!firstMsg) return [];
+    const out = [], seenU = new Set();
+    const add = (o) => { if (o.url && !seenU.has(o.url)) { seenU.add(o.url); out.push(o); } };
+    firstMsg.querySelectorAll('.message-body img:not(.smilie), .message-attachments img').forEach((im) => {
+      const u = im.getAttribute('data-src') || im.getAttribute('src');
+      if (u && !/smilies|emoji|data:image\/gif/i.test(u)) add({ type: 'img', url: new URL(u, location.origin).href });
+    });
+    const links = [...(post ? post.querySelectorAll('a[href^="http"]') : [])].map((a) => a.href)
+      .concat(text.match(/https?:\/\/[^\s<>"']+/gi) || []);
+    links.forEach((u) => {
+      if (/forum\.blackrussia\.online/i.test(u)) return;
+      if (/\.(png|jpe?g|webp|gif)(\?|$)/i.test(u) || /i\.imgur\.com|i\.ibb\.co|i\.postimg\.cc|i\.yapx\.ru/i.test(u)) add({ type: 'img', url: u });
+      else add({ type: 'link', url: u, host: (() => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } })() });
+    });
+    return out.slice(0, 24);
+  })();
+  function openLightbox(url) {
+    const lb = document.createElement('div');
+    lb.id = 'brc-lb';
+    lb.innerHTML = `<img src="${url.replace(/"/g, '%22')}"><a href="${url.replace(/"/g, '%22')}" target="_blank">Открыть оригинал ↗</a>`;
+    lb.onclick = (e) => { if (e.target.tagName !== 'A') lb.remove(); };
+    document.body.appendChild(lb);
+  }
+
   /* ---------- состояние ---------- */
   const esc2 = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const manual = MANUAL[sec.key];
@@ -2037,6 +2307,7 @@
     if (rw && !rw.fixed && rw.left <= 0) banner = `<div class="bn r"><div>${I('clock')}<span><b>24 ч на доработку вышли</b> — автор ничего не исправил</span></div>
       <button class="a no rec" id="brc-rwno">${I('ban')}Отказать: не исправлено</button></div>`;
     else if (rw && !rw.fixed) banner = `<div class="bn y"><div>${I('wrench')}<span>На доработке — у автора осталось <b>${rw.left} ч</b></span></div></div>`;
+    if (!banner && takenBy) banner = `<div class="bn t"><div>${I('user')}<span>Тему уже взял <b>${esc2(takenBy.who)}</b>${takenBy.h != null ? ` · ${takenBy.h} ч назад` : ''} — не пересекайтесь</span></div></div>`;
     else if (rw && rw.fixed) banner = `<div class="bn t"><div>${I('edit')}<span>Автор ${rw.edited ? 'отредактировал тему' : 'ответил'} после доработки — перепроверь</span></div></div>`;
 
     const q = copyPhrases[0] ? encodeURIComponent(`"${copyPhrases[0]}"`) : '';
@@ -2088,7 +2359,7 @@
         <div class="acts">
           <button class="a ok ${recOk ? 'rec' : ''}" id="brc-ok" ${fails.length ? 'disabled title="Есть нарушения"' : ''}>${I('check')}Одобрить</button>
           <button class="a no ${recNo ? 'rec' : ''} ${state.rsOpen ? 'on' : ''}" id="brc-no">${I('ban')}Отказ${sel.size ? ` <b class="nb">${sel.size}</b>` : ''}</button>
-          <button class="a wt" id="brc-wt">${I('hour')}Рассмотр.</button>
+          <button class="a wt" id="brc-wt">${I('hour')}Взять</button>
         </div>
 
         <div class="rs ${state.rsOpen ? 'open' : ''}" id="brc-rs">
@@ -2115,6 +2386,10 @@
         ${state.hl ? `<div class="legend"><mark class="brc-m copy">копипаст-фраза</mark><mark class="brc-m mix">подмена букв</mark><mark class="brc-m caps">капс</mark><mark class="brc-m low">маленькая буква</mark><mark class="brc-m sp">нет пробела</mark><mark class="brc-m sup">сверхъестеств.</mark><mark class="brc-m ooc">OOC</mark></div>` : ''}
 
         ${fails.length || warns.length || loading.length ? `<div class="sec"><div class="sh">Замечания</div><div class="lst">${[...fails, ...warns, ...loading].map(item).join('')}</div></div>` : ''}
+        ${gallery.length ? `<div class="sec"><div class="sh"><span>Доказательства · ${gallery.length}</span></div>
+          <div class="gal">${gallery.map((g, i) => g.type === 'img'
+            ? `<button class="gi" data-g="${i}" style="background-image:url('${g.url.replace(/'/g, '%27')}')"></button>`
+            : `<a class="gl" href="${esc2(g.url)}" target="_blank">${I('ext')}<span>${esc2(g.host)}</span></a>`).join('')}</div></div>` : ''}
         <div class="sec">
           <div class="sh" id="brc-okh"><span>Пройдено · ${ok.length}</span><span class="cnt">${state.okOpen ? 'скрыть' : 'показать'}</span></div>
           <div class="okl ${state.okOpen ? 'open' : ''}"><div class="lst">${ok.map(item).join('')}</div></div>
@@ -2162,6 +2437,7 @@
     $('brc-newr').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
 
     $('brc-next').onclick = goNext;
+    box.querySelectorAll('.gi').forEach((b) => (b.onclick = () => openLightbox(gallery[+b.dataset.g].url)));
     $('brc-rul').onclick = () => openRules(sec.id);
     $('brc-hl').onclick = () => {
       const n = toggleHL();
