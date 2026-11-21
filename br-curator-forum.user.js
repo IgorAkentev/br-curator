@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      5.3.1
+// @version      5.4.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         5.4.0 — причины отказа подбираются автоматически и по подозрениям (метка «авто»)
 // @note         5.3.1 — имя вместо ника в заголовке био: предупреждение, а не нарушение; кэш сбрасывается при обновлении
 // @note         5.3.0 — новый дизайн панели проверки: единые иконки, рекомендуемое действие, списки замечаний; вторая одобренная био — предупреждение, а не нарушение
 // @note         5.2.2 — компактное меню со вкладками
@@ -42,7 +43,7 @@
   const MIN_FONT_PX = 15;
 
   const RX_NICK = /[A-Z][a-z]+_[A-Z][a-z]+/;
-  const RX_SUPER = /сверхспособн|магич|магия|колдун|ведьм|телепорт|бессмерт|вампир|оборот(ень|ни)|телекинез|воскрес/i;
+  const RX_SUPER = /сверхспособн|суперсил|магич|магия|колдун|колдов|ведьм|чародей|заклинан|телепорт|бессмерт|вампир|оборот(ень|ни)|телекинез|телепат|экстрасенс|воскрес|призрак|демон[а-я]*\s+(вселил|овладел)/i;
 
   const SECTIONS = {
     2186: {
@@ -106,7 +107,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '5.3.1';
+  const VERSION = '5.4.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -1044,6 +1045,24 @@
     res.push(!mixed ? { s: 'ok', t: 'Без подмены букв' }
       : { s: 'warn', t: `Латиница внутри русских слов: ${mixed} — признак обхода антиплагиата` });
 
+    // Подозрения -> подходящая причина отказа (номер из MANUAL или свой текст)
+    const WARN_R = [
+      [/нереалистичн/i, { bio: 0, sit: 2 }],
+      [/OOC-слова/i, { sit: 0, bio: 'В биографии присутствует OOC-информация.', org: 'В заявке присутствует OOC-информация.' }],
+      [/Похоже на ошибки/i, { bio: 3, sit: 1, org: 8 }],
+      [/Латиница внутри/i, { bio: 2, sit: 4, org: 4 }],
+      [/госфракц/i, { org: 5 }],
+      [/≠/, { bio: 'Имя и фамилия персонажа не совпадают с ником в заголовке (п. 1.1).' }],
+      [/Сомнительный возраст/i, { bio: 5 }],
+      [/не в раздел биографий/i, { org: 'Ссылка на RP биографию лидера ведёт не на одобренную биографию.' }],
+    ];
+    for (const c of res) {
+      if (c.s !== 'warn' || c.r) continue;
+      const hit = WARN_R.find(([re]) => re.test(c.t));
+      const v = hit && hit[1][sec.key];
+      if (v != null) c.r = typeof v === 'number' ? MANUAL[sec.key][v] : v;
+    }
+
     return res;
   }
 
@@ -1266,6 +1285,8 @@
     #brc .ck i{width:20px;height:20px;border-radius:6px;border:2px solid #ffffff30;flex:none;margin-top:0;display:grid;place-items:center;font-style:normal;font-size:12px;font-weight:900;transition:.15s}
     #brc .ck input:checked + i{background:var(--r);border-color:var(--r);color:#fff}
     #brc .ck input:checked + i::after{content:'✓'}
+    #brc .ck em.au{font-style:normal;font-size:10px;font-weight:800;padding:1px 6px;border-radius:6px;background:#40c4d322;color:var(--b);vertical-align:1px}
+    #brc .a .nb{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#ffffff26;font-size:11px;color:inherit}
     #brc .ck .del{margin-left:auto;background:none;border:none;color:var(--mut);font-size:18px;line-height:1;cursor:pointer}
     #brc .addr{display:flex;gap:6px;margin-top:10px}
     #brc .addr input{flex:1;min-width:0;padding:10px 12px;border-radius:11px;border:1px solid var(--line);background:#0b1013;color:var(--txt);font-size:13px}
@@ -1574,7 +1595,11 @@
     const ok = done.filter((c) => c.s === 'ok');
     const warns = done.filter((c) => c.s === 'warn');
     const fails = done.filter((c) => c.s === 'fail');
-    fails.forEach((f) => { if (!seen.has(f.r)) { seen.add(f.r); sel.add(f.r); } });
+    const autoR = [...fails, ...warns].filter((c) => c.r).map((c) => c.r);
+    autoR.forEach((t) => { if (!seen.has(t)) { seen.add(t); sel.add(t); } });
+    const autoSet = new Set(autoR);
+    const listed = new Set([...manual, ...getShared(), ...getCust()]);
+    const extraWarn = [...new Set(warns.filter((w) => w.r && !listed.has(w.r)).map((w) => w.r))];
 
     const pct = Math.round((ok.length / (done.length || 1)) * 100);
     const col = fails.length ? 'var(--r)' : warns.length ? 'var(--y)' : 'var(--g)';
@@ -1592,7 +1617,7 @@
     const icon = (st) => (st === 'load' ? '<i class="sp"></i>' : I({ ok: 'check', warn: 'alert', fail: 'x' }[st]));
     const item = (c) => `<div class="it ${c.s}"><div class="ic">${icon(c.s)}</div><div class="tx">${esc2(c.t)}</div>${
       c.link ? `<a class="lnk" href="${esc2(c.link)}" target="_blank" title="Открыть">${I('ext')}</a>` : ''}</div>`;
-    const ck = (txt, del) => `<label class="ck"><input type="checkbox" data-t="${esc2(txt)}" ${sel.has(txt) ? 'checked' : ''}><i></i><span>${esc2(txt)}</span>${
+    const ck = (txt, del) => `<label class="ck"><input type="checkbox" data-t="${esc2(txt)}" ${sel.has(txt) ? 'checked' : ''}><i></i><span>${esc2(txt)}${autoSet.has(txt) ? ' <em class="au">авто</em>' : ''}</span>${
       del != null ? `<button class="del" data-del="${del}" title="Удалить">×</button>` : ''}</label>`;
 
     let banner = '';
@@ -1629,12 +1654,13 @@
         ${banner}
         <div class="acts">
           <button class="a ok ${recOk ? 'rec' : ''}" id="brc-ok" ${fails.length ? 'disabled title="Есть нарушения"' : ''}>${I('check')}Одобрить</button>
-          <button class="a no ${recNo ? 'rec' : ''} ${state.rsOpen ? 'on' : ''}" id="brc-no">${I('ban')}Отказ</button>
+          <button class="a no ${recNo ? 'rec' : ''} ${state.rsOpen ? 'on' : ''}" id="brc-no">${I('ban')}Отказ${sel.size ? ` <b class="nb">${sel.size}</b>` : ''}</button>
           <button class="a wt" id="brc-wt">${I('hour')}Рассмотр.</button>
         </div>
 
         <div class="rs ${state.rsOpen ? 'open' : ''}" id="brc-rs">
           ${fails.length ? '<div class="sub">НАЙДЕНО СКРИПТОМ</div>' + fails.map((f) => ck(f.r)).join('') : ''}
+          ${extraWarn.length ? '<div class="sub">СКРИПТ ПОДОЗРЕВАЕТ — СНИМИ, ЕСЛИ ЛОЖНО</div>' + extraWarn.map((t) => ck(t)).join('') : ''}
           <div class="sub">ОТМЕТЬ САМ, ЕСЛИ ЕСТЬ</div>
           ${manual.map((m) => ck(m)).join('')}
           ${getShared().length ? '<div class="sub">ОБЩИЕ ПРИЧИНЫ КОМАНДЫ</div>' + getShared().map((m) => ck(m)).join('') : ''}
@@ -1668,13 +1694,13 @@
 
     if (ls.get('min', false)) box.classList.add('min');
     if (draft) qs('#brc-newr', box).value = draft;
-    bind(fails);
+    bind(fails, extraWarn);
   }
 
-  function bind(fails) {
+  function bind(fails, extraWarn = []) {
     const $ = (id) => qs('#' + id, box);
     const reasons = () => {
-      const order = [...fails.map((f) => f.r), ...manual, ...getShared(), ...getCust()];
+      const order = [...fails.map((f) => f.r), ...extraWarn, ...manual, ...getShared(), ...getCust()];
       return order.filter((t, i) => sel.has(t) && order.indexOf(t) === i);
     };
     const mark = (id) => box.querySelectorAll('.acts .a').forEach((b) => b.classList.toggle('on', b.id === id));
@@ -1684,7 +1710,7 @@
     $('brc-send').onclick = finish;
 
     box.querySelectorAll('.ck input').forEach((inp) => {
-      inp.onchange = () => (inp.checked ? sel.add(inp.dataset.t) : sel.delete(inp.dataset.t));
+      inp.onchange = () => { inp.checked ? sel.add(inp.dataset.t) : sel.delete(inp.dataset.t); const nb = qs('#brc-no .nb', box); if (nb) nb.textContent = sel.size; };
     });
     box.querySelectorAll('.del').forEach((b) => {
       b.onclick = (e) => {
