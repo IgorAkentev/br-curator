@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BR Curator — Логи
 // @namespace    br-curator
-// @version      1.1.0
+// @version      1.2.0
 // @description  Сводка по логам Black Russia: игроки, поиск ботов, общие IP, подсветка, быстрые фильтры, отчёты
 // @author       Igor_Akentev
 // @match        https://logs.blackrussia.online/*
@@ -9,13 +9,14 @@
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-logs.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-logs.user.js
+// @note         1.2.0 — вкладка «Боты» в шапке сайта вместо кнопки, поиск ботов по периоду, фильтр списка, мобильный вид логов карточками, тема исправлена
 // @note         1.1.0 — новый дизайн панели (не ломается от стилей сайта), красивая таблица логов, плашка «Поиск ботов»
 // @note         1.0.0 — первая версия: сводка по игрокам, общие IP, подсветка слова, быстрые периоды, отчёт в буфер
 // ==/UserScript==
 
 (function () {
   'use strict';
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const ls = {
     get: (k, d) => { try { const v = localStorage.getItem('brcl_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set: (k, v) => { try { localStorage.setItem('brcl_' + k, JSON.stringify(v)); } catch (e) {} },
@@ -27,13 +28,13 @@
 
   // ---------- стили (всё с префиксом brl-, чтобы Bootstrap сайта не ломал) ----------
   const css = `
-  #brl-fab{all:unset;position:fixed;right:14px;bottom:86px;z-index:99999;width:52px;height:52px;border-radius:16px;
-    background:linear-gradient(135deg,#7c3aed,#14b8a6);color:#fff;font:800 13px/52px system-ui,sans-serif;text-align:center;
-    box-shadow:0 8px 22px rgba(124,58,237,.45);cursor:pointer;transition:transform .15s}
-  #brl-fab:active{transform:scale(.92)}
-  #brl-fab .brl-b{position:absolute;top:-6px;right:-6px;min-width:20px;height:20px;border-radius:10px;background:#ef4444;
-    font:800 11px/20px system-ui;padding:0 5px;box-sizing:border-box;box-shadow:0 0 0 2px #0b0f17}
-  #brl-fab .brl-b.bot{background:#f59e0b;color:#1a1200;left:-6px;right:auto}
+  #brl-htab{all:unset;box-sizing:border-box;display:inline-flex!important;align-items:center;gap:6px;height:36px;padding:0 12px;margin:0 8px;
+    border-radius:11px;background:linear-gradient(135deg,#7c3aed,#b45309);color:#fff!important;font:800 14px/1 system-ui,sans-serif;cursor:pointer;
+    white-space:nowrap;box-shadow:0 4px 14px rgba(124,58,237,.35);flex:0 0 auto;width:auto!important}
+  #brl-htab:active{transform:scale(.95)}
+  #brl-htab .brl-hn{background:#fff;color:#7c2d12;border-radius:8px;padding:2px 6px;font-size:12px}
+  #brl-htab.ok .brl-hn{background:#0f766e;color:#fff}
+  #brl-htab.float{position:fixed;top:12px;right:118px;z-index:99990}
   #brl-ov{position:fixed;inset:0;z-index:99998;background:rgba(3,6,12,.6);backdrop-filter:blur(2px);display:none}
   #brl-ov.on{display:block}
   #brl-sh{position:fixed;left:0;right:0;bottom:0;z-index:99999;max-height:88dvh;display:none;flex-direction:column;
@@ -100,17 +101,44 @@
   mark.brl-hl{background:#facc15!important;color:#111!important;border-radius:4px;padding:0 3px}
   tr.brl-pick>td{box-shadow:inset 0 0 0 2px #f472b6}
   /* красивые логи */
-  html.brl-pretty tr.brl-row>td{background:#171c28!important;color:#d1d5db!important;border-color:#232a3a!important}
-  html.brl-pretty tr.brl-row:hover>td{background:#1e2433!important}
-  html.brl-pretty tr.brl-row>td.brl-nk{color:#5eead4!important;font-weight:700}
-  html.brl-pretty tr.brl-msg>td{background:#0f131c!important;color:#f3f4f6!important;border-left:3px solid #7c3aed!important;
-    font-size:15px;padding:10px 14px!important;opacity:1!important}
+  html.brl-pretty tr.brl-row,html.brl-pretty tr.brl-row>td,html.brl-pretty tr.brl-row>td *:not(.brl-bot-tag){background:#171c28!important;background-image:none!important;
+    color:#d1d5db!important;opacity:1!important;filter:none!important;border-color:#232a3a!important}
+  html.brl-pretty tr.brl-row>td.brl-nk,html.brl-pretty tr.brl-row>td.brl-nk a{color:#5eead4!important;font-weight:800!important}
+  html.brl-pretty tr.brl-row>td.brl-ct{color:#c4b5fd!important}
+  html.brl-pretty tr.brl-msg,html.brl-pretty tr.brl-msg>td,html.brl-pretty tr.brl-msg>td *:not(mark){background:#0f131c!important;background-image:none!important;
+    color:#f3f4f6!important;opacity:1!important;filter:none!important}
+  html.brl-pretty tr.brl-msg>td{border:0!important;border-left:3px solid #7c3aed!important;font-size:15px!important;padding:10px 14px!important;line-height:1.45!important}
   html.brl-pretty tr.brl-msg.ad>td{border-left-color:#f59e0b!important}
-  html.brl-pretty tr.brl-row.bot>td{background:#2a1d10!important}
-  .brl-bot-tag{display:inline-block!important;width:auto!important;margin-left:6px;background:#f59e0b;color:#1a1200;border-radius:6px;padding:0 5px;font:800 11px/16px system-ui;vertical-align:middle}
+  html.brl-pretty tr.brl-msg pre,html.brl-pretty tr.brl-msg code{white-space:pre-wrap!important;word-break:break-word!important;font-size:12px!important;color:#93c5fd!important;background:#0a0d14!important;border-radius:8px;padding:8px!important}
+  html.brl-pretty tr.brl-row.bot,html.brl-pretty tr.brl-row.bot>td,html.brl-pretty tr.brl-row.bot>td *:not(.brl-bot-tag){background:#2b1a10!important}
+  .brl-bot-tag{display:inline-block!important;width:auto!important;margin:2px 0 0 6px;border-radius:6px;padding:1px 6px;font:800 11px/16px system-ui!important;vertical-align:middle;
+    background:#f59e0b!important;color:#1a1200!important;white-space:nowrap}
+  .brl-bot-tag.bot{background:#ef4444!important;color:#fff!important}
+  /* телефон: строки логов карточками */
+  html.brl-mob .brl-tbl,html.brl-mob .brl-tbl>tbody{display:block!important;width:100%!important;border:0!important;background:none!important}
+  html.brl-mob .brl-tbl>thead{display:none!important}
+  html.brl-mob tr.brl-row{display:flex!important;flex-wrap:wrap;align-items:center;gap:2px 10px;padding:10px 12px 6px!important;margin:12px 6px 0!important;border-radius:14px 14px 0 0;overflow:hidden}
+  html.brl-mob tr.brl-row>td{display:block!important;border:0!important;padding:0!important;width:auto!important;min-width:0!important;height:auto!important;text-align:left!important;font-size:12.5px!important;background:transparent!important}
+  html.brl-mob tr.brl-row>td.brl-e,html.brl-mob tr.brl-row>td.brl-cn{display:none!important}
+  html.brl-mob tr.brl-row>td.brl-nk{order:1;flex:1 1 auto;font-size:16px!important}
+  html.brl-mob tr.brl-row>td.brl-ct{order:2;flex:0 0 auto;font-size:12px!important;background:#2a2347!important;border-radius:8px;padding:2px 8px!important}
+  html.brl-mob tr.brl-row>td.brl-tm{order:3;flex:1 0 100%;color:#8b93a7!important}
+  html.brl-mob tr.brl-row>td.brl-tm br{display:none}
+  html.brl-mob tr.brl-row>td.brl-id,html.brl-mob tr.brl-row>td.brl-ip,html.brl-mob tr.brl-row>td.brl-ot{order:4;color:#8b93a7!important}
+  html.brl-mob tr.brl-row>td.brl-id::before{content:'ID '}
+  html.brl-mob tr.brl-row>td.brl-ip::before{content:'IP '}
+  html.brl-mob tr.brl-row>td.brl-ot::before{content:attr(data-brl-h) ' '}
+  html.brl-mob tr.brl-msg{display:block!important;margin:0 6px!important;border-radius:0 0 14px 14px;overflow:hidden}
+  html.brl-mob tr.brl-msg>td{display:block!important;width:auto!important;max-width:100%!important;overflow:hidden}
+  html.brl-pretty tr.brl-msg2>td{padding-top:0!important}
+  html.brl-mob tr.brl-msg.brl-mid{border-radius:0!important;margin-bottom:0!important}
+  html.brl-mob tr.brl-row.bot{box-shadow:inset 0 3px 0 #ef4444}
   `;
   const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
   if (ls.get('pretty', true)) document.documentElement.classList.add('brl-pretty');
+  const mobOn = () => ls.get('mob', innerWidth < 900);
+  const applyMob = () => document.documentElement.classList.toggle('brl-mob', mobOn());
+  applyMob();
 
   const toast = (t) => { let el = document.getElementById('brl-toast'); if (!el) { el = document.createElement('div'); el.id = 'brl-toast'; document.body.appendChild(el); }
     el.textContent = t; el.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => (el.style.display = 'none'), 1800); };
@@ -144,10 +172,18 @@
         const g = (k) => (m[k] != null && tds[m[k]] ? norm(tds[m[k]].textContent) : '');
         last = { tr: r, time: g('time'), cat: g('cat'), nick: m.nick != null && tds[m.nick] ? norm([...tds[m.nick].childNodes].filter((n) => !(n.classList && n.classList.contains('brl-bot-tag'))).map((n) => n.textContent).join(' ')) : '', pid: g('pid'), ip: g('ip'), acc: g('acc'), sum: g('sum'), after: g('after'), text: '' };
         last.ms = toMs(last.time);
-        r.classList.add('brl-row'); if (m.nick != null && tds[m.nick]) { tds[m.nick].classList.add('brl-nk'); last.nkTd = tds[m.nick]; }
+        r.classList.add('brl-row'); table.classList.add('brl-tbl');
+        const cls = { time: 'brl-tm', cat: 'brl-ct', nick: 'brl-nk', pid: 'brl-id', ip: 'brl-ip' };
+        tds.forEach((td, i) => { const k = Object.keys(m).find((x) => m[x] === i); td.classList.add(k && cls[k] ? cls[k] : i === 0 && !k ? 'brl-cn' : 'brl-ot');
+          if (k && !cls[k]) td.dataset.brlH = { acc: 'Аккаунт', sum: 'Сумма', after: '$ после' }[k] || '';
+          td.classList.toggle('brl-e', /^[–—-]?$/.test(norm([...td.childNodes].filter((n) => !(n.classList && n.classList.contains('brl-bot-tag'))).map((n) => n.textContent).join('')))); });
+        if (m.nick != null && tds[m.nick]) last.nkTd = tds[m.nick];
         out.push(last);
-      } else if (last && tds.length >= 1 && !last.textTr) {
-        last.text = norm(r.textContent); last.textTr = r; r.classList.add('brl-msg'); if (AD_RE.test(last.text)) r.classList.add('ad');
+      } else if (last && tds.length >= 1) {
+        r.classList.add('brl-msg');
+        if (!last.textTr) { last.text = norm(r.textContent); last.textTr = r; if (AD_RE.test(last.text)) r.classList.add('ad'); }
+        else { r.classList.add('brl-msg2'); (last.lastMsg || last.textTr).classList.add('brl-mid'); }
+        last.lastMsg = r;
       }
     });
     return out.filter((x) => x.nick);
@@ -178,7 +214,8 @@
     r.arr.forEach((g) => {
       const why = []; let s = 0;
       const n = g.items.length;
-      const texts = g.items.map((x) => x.text.toLowerCase()).filter(Boolean);
+      const chat = g.items.filter((x) => /чат|chat|смс|sms|рация|ooc|\/b/i.test(x.cat) || !x.cat);
+      const texts = chat.map((x) => x.text.toLowerCase()).filter(Boolean);
       const uniq = new Set(texts).size;
       // 1. повторяет одно и то же
       if (texts.length >= 3 && uniq / texts.length <= 0.5) { s += 30; why.push(`повторяет одно и то же (${uniq} уник. из ${texts.length})`); }
@@ -188,7 +225,11 @@
       if (ads && ads / Math.max(texts.length, 1) >= 0.6) { s += 25; why.push('почти всё — реклама/ссылки'); }
       else if (ads) { s += 10; why.push('упоминает тг/ссылки'); }
       // 3. скорость
-      const ms = g.items.map((x) => x.ms).filter(Boolean).sort((a, b) => a - b);
+      const ms = chat.map((x) => x.ms).filter(Boolean).sort((a, b) => a - b);
+      // пачки одинаковых сообщений за пару секунд
+      let burst = 0; const ch = chat.slice().sort((a, b) => a.ms - b.ms);
+      for (let i = 1; i < ch.length; i++) if (ch[i].text && ch[i].text === ch[i - 1].text && ch[i].ms - ch[i - 1].ms <= 3000) burst++;
+      if (burst >= 2) { s += 15; why.push(`шлёт одно и то же подряд (${pl(burst, 'раз', 'раза', 'раз')} за ≤3 сек)`); }
       if (ms.length >= 3) {
         const gaps = []; for (let i = 1; i < ms.length; i++) gaps.push((ms[i] - ms[i - 1]) / 1000);
         gaps.sort((a, b) => a - b); const med = gaps[Math.floor(gaps.length / 2)];
@@ -211,13 +252,13 @@
       if (Object.keys(g.cats).length >= 2 && uniq < texts.length) { s += 5; why.push('дублирует в разные чаты'); }
       if (n === 1) s = Math.min(s, 45);
       g.score = Math.min(100, s); g.why = why;
-      g.lvl = g.score >= 60 ? 'bot' : g.score >= 35 ? 'sus' : '';
+      g.lvl = g.score >= 55 ? 'bot' : g.score >= 30 ? 'sus' : '';
     });
     r.bots = r.arr.filter((g) => g.lvl === 'bot'); r.sus = r.arr.filter((g) => g.lvl === 'sus');
     r.arr.forEach((g) => g.items.forEach((x) => {
       x.tr.classList.toggle('bot', g.lvl === 'bot');
       if (x.nkTd) { const old = x.nkTd.querySelector('.brl-bot-tag'); if (old) old.remove();
-        if (g.lvl) { const t = document.createElement('span'); t.className = 'brl-bot-tag'; t.textContent = g.lvl === 'bot' ? '🤖 бот' : '🤖?'; x.nkTd.appendChild(t); } }
+        if (g.lvl) { const t = document.createElement('span'); t.className = 'brl-bot-tag ' + g.lvl; t.textContent = (g.lvl === 'bot' ? 'БОТ ' : '? ') + g.score + '%'; x.nkTd.appendChild(t); } }
     }));
   }
 
@@ -261,20 +302,34 @@
   }
 
   // ---------- UI ----------
-  const fab = document.createElement('div'); fab.id = 'brl-fab'; fab.textContent = 'BRC'; document.body.appendChild(fab);
+  const fab = document.createElement('button'); fab.id = 'brl-htab'; fab.type = 'button'; fab.innerHTML = '🤖 Боты';
+  function mountTab() {
+    if (fab.isConnected && !fab.classList.contains('float')) return;
+    const nav = document.querySelector('nav, header, .navbar');
+    const tg = nav && (nav.querySelector('.navbar-toggler, button[aria-label*="navig" i], button[data-bs-toggle], button[data-toggle]'));
+    if (tg && tg.parentElement) { fab.classList.remove('float'); tg.parentElement.insertBefore(fab, tg); }
+    else if (nav) { fab.classList.remove('float'); (nav.querySelector('.container, .container-fluid') || nav).appendChild(fab); }
+    else { fab.classList.add('float'); document.body.appendChild(fab); }
+  }
+  mountTab();
   const ov = document.createElement('div'); ov.id = 'brl-ov'; document.body.appendChild(ov);
   const sh = document.createElement('div'); sh.id = 'brl-sh'; document.body.appendChild(sh);
-  let tab = 'sum', data = null, gr = null;
+  let tab = 'bots', data = null, gr = null, bf = '', bl = 'all';
+  sh.addEventListener('input', (e) => { if (e.target.id !== 'brl-bf') return; bf = e.target.value; const pos = e.target.selectionStart; draw();
+    const i = document.getElementById('brl-bf'); i.focus(); i.setSelectionRange(pos, pos); });
   const close = () => { sh.classList.remove('on'); ov.classList.remove('on'); };
   ov.onclick = close;
-  fab.onclick = () => { refresh(); draw(); sh.classList.add('on'); ov.classList.add('on'); };
+  const open = (t) => { if (t) tab = t; refresh(); draw(); sh.classList.add('on'); ov.classList.add('on'); };
+  fab.onclick = (e) => { e.preventDefault(); e.stopPropagation(); open('bots'); };
 
   function refresh() { data = parse(); gr = data ? group(data) : null; if (data) highlight(data); badge(); }
   function badge() {
     const n = gr ? gr.arr.length : 0, b = gr ? gr.bots.length : 0;
-    fab.innerHTML = 'BRC' + (n ? `<span class="brl-b">${n}</span>` : '') + (b ? `<span class="brl-b bot">🤖${b}</span>` : '');
+    const s = gr ? gr.sus.length : 0; fab.classList.toggle('ok', !b && !s);
+    fab.innerHTML = '🤖 Боты' + (gr ? `<span class="brl-hn">${b + s}</span>` : '');
   }
 
+  const sel = '[data-a],[data-t],[data-h],[data-w],[data-bh],[data-bl]';
   const B = (a, t, cls = '', extra = '') => `<button class="brl-b ${cls}" data-a="${a}" ${extra}>${t}</button>`;
   function playerCard(g, i, botView) {
     const tags = [...g.ips].map((ip) => `<span class="brl-tag${gr.ipNicks.get(ip).size > 1 ? ' r' : ''}">${esc(ip)}</span>`).join('') +
@@ -307,14 +362,23 @@
       gr.arr.forEach((g, i) => (body += playerCard(g, i, false)));
       body += `<div class="brl-mut" style="text-align:center">Считаются только загруженные строки. Подгрузил ещё — жми ⟳.</div>`;
     } else if (tab === 'bots') {
-      body += `<div class="brl-c"><div class="brl-stat"><div class="brl-st"><b style="color:#f59e0b">${gr.bots.length}</b><span>ботов</span></div>
+      body += `<div class="brl-c"><b>🔎 Искать ботов</b><div class="brl-mut">Загрузит все логи за период (без фильтра по тексту) и сразу проверит</div>
+        <div class="brl-grid" style="margin-top:8px">${[[0.5, '30 мин'], [1, '1 час'], [3, '3 часа'], [6, '6 часов'], [12, '12 часов'], [24, 'Сутки']]
+          .map(([h, t]) => `<button class="brl-b" data-bh="${h}">${t}</button>`).join('')}</div>
+        <div class="brl-mut" style="margin-top:8px">Или по рекламе:</div>
+        <div class="brl-chips">${['тгк', 't.me', 'телег', '@', 'раздает', 'бесплатно', 'промо'].map((x) => `<button class="brl-b" data-w="${esc(x)}" data-bot="1">${esc(x)}</button>`).join('')}</div></div>`;
+      body += `<div class="brl-c"><div class="brl-stat"><div class="brl-st"><b style="color:#ef4444">${gr.bots.length}</b><span>ботов</span></div>
         <div class="brl-st"><b style="color:#fcd34d">${gr.sus.length}</b><span>подозрение</span></div><div class="brl-st"><b>${gr.arr.length - nb}</b><span>норм</span></div></div>
-        <div class="brl-row2">${B('rbots', '📋 Отчёт по ботам', 'o')}${B('nbots', 'Ники ботов')}</div>
-        <div class="brl-mut" style="margin-top:8px">Смотрю: повторы текста, рекламу/тг, скорость сообщений, одинаковый текст у разных ников, общий IP/подсеть, ID подряд (пачка регов). Это подсказка — решение за тобой.</div></div>`;
-      const L = gr.arr.map((g, i) => [g, i]).filter(([g]) => g.lvl).sort((a, b) => b[0].score - a[0].score);
-      if (!L.length) body += `<div class="brl-c">Чисто, ботов не видно 👌</div>`;
+        <div class="brl-row2">${B('rbots', '📋 Отчёт', 'o')}${B('nbots', 'Ники ботов')}</div></div>`;
+      body += `<input class="brl-in" id="brl-bf" placeholder="🔍 Ник, ID или IP…" value="${esc(bf)}">
+        <div class="brl-chips" style="margin:8px 0 10px">${[['all', 'Все'], ['bot', 'Боты'], ['sus', 'Подозрение'], ['ok', 'Норм']]
+          .map(([k, t]) => `<button class="brl-b ${bl === k ? 'v' : ''}" data-bl="${k}">${t}</button>`).join('')}</div><div id="brl-bl">`;
+      const q = bf.toLowerCase();
+      const L = gr.arr.map((g, i) => [g, i]).filter(([g]) => (bl === 'all' ? g.lvl : bl === 'ok' ? !g.lvl : g.lvl === bl))
+        .filter(([g]) => !q || (g.nick + ' ' + g.pid + ' ' + [...g.ips].join(' ')).toLowerCase().includes(q)).sort((a, b) => b[0].score - a[0].score);
+      if (!L.length) body += `<div class="brl-c">${q || bl !== 'all' ? 'Ничего не нашёл' : 'Чисто, ботов не видно 👌'}</div>`;
       L.forEach(([g, i]) => (body += playerCard(g, i, true)));
-      body += `<div class="brl-lb">Быстрый поиск рекламы</div><div class="brl-chips">${['тгк', 't.me', 'телег', '@', 'раздает', 'бесплатно'].map((x) => `<button class="brl-b" data-w="${esc(x)}">${esc(x)}</button>`).join('')}</div>`;
+      body += `</div><div class="brl-mut" style="margin-top:6px">Смотрю: повторы, рекламу/тг, скорость, одинаковый текст у разных ников, общий IP/подсеть, ID подряд. Проверяются только сообщения чатов. Это подсказка — решение за тобой.</div>`;
     } else {
       const words = ls.get('words', ['br_banda', 't.me', 'тгк', 'telegram', 'discord']);
       body = `<label class="brl-lb">Период (от сейчас)</label><div class="brl-grid">${[[1, '1 час'], [3, '3 часа'], [12, '12 часов'], [24, 'Сутки'], [72, '3 дня'], [168, 'Неделя']]
@@ -325,22 +389,25 @@
         <label class="brl-lb">Сохранённые слова (через запятую)</label><input class="brl-in" id="brl-ws" value="${esc(words.join(', '))}">
         <label class="brl-lb">Что подсвечивать (пусто = слово из поиска)</label><input class="brl-in" id="brl-hl" value="${esc(ls.get('hl', ''))}">
         <div class="brl-sw" style="margin-top:12px"><span>✨ Красивая таблица логов</span><input type="checkbox" id="brl-pr" ${ls.get('pretty', true) ? 'checked' : ''}></div>
+        <div class="brl-sw"><span>📱 Логи карточками (для телефона)</span><input type="checkbox" id="brl-mb" ${mobOn() ? 'checked' : ''}></div>
         <div class="brl-row2">${B('save', 'Сохранить', 'p')}${B('x', 'Закрыть')}</div>
         <div class="brl-mut" style="margin-top:16px;text-align:center">BR Curator Логи v${VERSION} · <a href="https://vk.ru/igor_akentev" target="_blank">связь с разработчиком</a></div>`;
     }
     const t = (id, txt, n) => `<button class="brl-tab ${tab === id ? 'a' : ''}" data-t="${id}">${txt}${n ? `<span class="brl-n">${n}</span>` : ''}</button>`;
-    sh.innerHTML = `<div class="brl-grip"></div><div class="brl-hd"><div class="brl-ttl">Логи · сводка<small>Khabarovsk 49${w ? ' · «' + esc(w) + '»' : ''}</small></div>
+    sh.innerHTML = `<div class="brl-grip"></div><div class="brl-hd"><div class="brl-ttl">${tab === 'bots' ? '🤖 Поиск ботов' : tab === 'sum' ? '👥 Игроки' : '⚙️ Фильтры'}<small>Khabarovsk 49${w ? ' · «' + esc(w) + '»' : ''}</small></div>
       <button class="brl-ib" data-a="ref">⟳</button><button class="brl-ib" data-a="x">✕</button></div>
-      <div class="brl-tabs">${t('sum', '👥 Игроки')}${t('bots', '🤖 Боты', nb)}${t('flt', '⚙️ Фильтры')}</div>
+      <div class="brl-tabs">${t('bots', '🤖 Боты', nb)}${t('sum', '👥 Игроки')}${t('flt', '⚙️ Фильтры')}</div>
       <div class="brl-bd">${body}</div>`;
   }
 
   sh.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-a],[data-t],[data-h],[data-w]'); if (!b) return;
+    const b = e.target.closest(sel); if (!b) return;
     const card = b.closest('.brl-c[data-i]'); const g = card && gr.arr[+card.dataset.i];
     if (b.dataset.t) { tab = b.dataset.t; draw(); return; }
     if (b.dataset.h) return period(+b.dataset.h);
-    if (b.dataset.w) return searchWord(b.dataset.w);
+    if (b.dataset.bh) { sessionStorage.setItem('brl_open', 'bots'); return go({ td: null, tstart: String(Date.now() - b.dataset.bh * 3600e3), tend: String(Date.now() + 5 * 60e3) }); }
+    if (b.dataset.bl) { bl = b.dataset.bl; draw(); return; }
+    if (b.dataset.w) { if (b.dataset.bot) sessionStorage.setItem('brl_open', 'bots'); return searchWord(b.dataset.w); }
     switch (b.dataset.a) {
       case 'x': return close();
       case 'ref': refresh(); draw(); return toast('Обновлено');
@@ -362,6 +429,7 @@
       case 'save': {
         ls.set('words', document.getElementById('brl-ws').value.split(',').map((s) => s.trim()).filter(Boolean));
         ls.set('hl', document.getElementById('brl-hl').value.trim());
+        ls.set('mob', document.getElementById('brl-mb').checked); applyMob();
         const pr = document.getElementById('brl-pr').checked; ls.set('pretty', pr); document.documentElement.classList.toggle('brl-pretty', pr);
         refresh(); draw(); return toast('Сохранено');
       }
@@ -371,7 +439,8 @@
   // счётчик обновляется сам, когда таблица подгружается
   let tmr, busy = false;
   new MutationObserver((ms) => { if (busy || ms.every((m) => sh.contains(m.target) || fab.contains(m.target) || (m.target.closest && m.target.closest('.brl-nk,.brl-msg')))) return;
-    clearTimeout(tmr); tmr = setTimeout(() => { if (!sh.classList.contains('on')) { busy = true; refresh(); setTimeout(() => (busy = false), 50); } }, 700); })
+    clearTimeout(tmr); tmr = setTimeout(() => { mountTab(); if (!sh.classList.contains('on')) { busy = true; refresh(); setTimeout(() => (busy = false), 50); } }, 700); })
     .observe(document.body, { childList: true, subtree: true });
-  setTimeout(refresh, 800);
+  setTimeout(() => { mountTab(); refresh(); if (sessionStorage.getItem('brl_open')) { const t = sessionStorage.getItem('brl_open'); sessionStorage.removeItem('brl_open');
+    let n = 0; const w = setInterval(() => { refresh(); if ((data && data.length) || ++n > 15) { clearInterval(w); open(t); } }, 600); } }, 800);
 })();
