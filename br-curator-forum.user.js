@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         BR | Кураторы форума — автопроверка (РП био / ситуации / неоф. орг)
 // @namespace    br-curator-khabarovsk
-// @version      4.0.2
+// @version      4.1.0
 // @description  Проверяет темы по правилам разделов, готовит ответ (одобрено / отказ / доработка), ставит префикс, закрывает или закрепляет тему
 // @match        https://forum.blackrussia.online/*
 // @updateURL    https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
 // @downloadURL  https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js
+// @note         4.1.0 — новое меню: статус обновлений, настройки (мгновенная отправка, таймеры, свёрнутая панель), сброс кэша
 // @note         4.0.2 — фото по ссылке текстом засчитываются, фикс иконки
 // @note         4.0.1 — новая иконка настроек, фикс дублей и таймера на рассмотренных темах
 // @note         4.0.0 — поиск копипаста и дублей, очередь с таймерами в разделах, контроль доработки 24ч, свои причины, подсветка в тексте
@@ -23,7 +24,6 @@
 
   // ID префиксов — ПРОВЕРЬ: "Редактировать тему" -> список префиксов -> value у option
   const PREFIX = { ACCEPT: 8, DECLINE: 7, WATCHED: 9 };
-  const AUTO_SEND = false;            // true — отправлять сразу по клику
   const FONTS = /verdana|times new roman/i;
   const MIN_FONT_PX = 15;
 
@@ -92,7 +92,7 @@
 
   /* ===================== ОБНОВЛЕНИЯ ===================== */
 
-  const VERSION = '4.0.2';
+  const VERSION = '4.1.0';
   // Прямая (raw) ссылка на файл скрипта. Та же, что в @updateURL сверху.
   const UPDATE_URL = 'https://raw.githubusercontent.com/IgorAkentev/br-curator/main/br-curator-forum.user.js';
   const CHECK_EVERY_H = 6; // автопроверка раз в N часов
@@ -108,93 +108,184 @@
   };
 
   (function updater() {
+    const GEAR = `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+      <circle cx="12" cy="12" r="3"/></svg>`;
+
     const st = document.createElement('style');
     st.textContent = `
       #brc-fab{position:fixed;left:14px;bottom:90px;z-index:100001;width:50px;height:50px;border-radius:16px;border:1px solid #ffffff30;
         display:grid;place-items:center;padding:0;transition:transform .25s,box-shadow .25s;
-        background:linear-gradient(135deg,#3ec6d0,#1ec27a);color:#fff;font-size:20px;box-shadow:0 6px 18px #1ec27a55;cursor:pointer}
-      #brc-fab svg{width:26px!important;height:26px!important;transition:transform .5s;fill:none!important}
-      #brc-fab svg *{fill:none!important;stroke:#fff!important;stroke-width:2px!important}
+        background:linear-gradient(135deg,#3ec6d0,#1ec27a);box-shadow:0 6px 18px #1ec27a55;cursor:pointer}
+      #brc-fab svg,#brc-upd .hd svg{width:26px!important;height:26px!important;transition:transform .5s;fill:none!important}
+      #brc-fab svg *,#brc-upd .hd svg *{fill:none!important;stroke:#fff!important;stroke-width:2px!important}
       #brc-fab.open svg{transform:rotate(90deg)}
       #brc-fab:active{transform:scale(.92)}
       #brc-fab .dot{position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:#ff5468;border:2px solid #11181b;display:none;
         animation:brcpulse 1.4s infinite}
       @keyframes brcpulse{0%{box-shadow:0 0 0 0 #ff546899}70%{box-shadow:0 0 0 8px #ff546800}100%{box-shadow:0 0 0 0 #ff546800}}
-      #brc-upd{position:fixed;left:14px;bottom:144px;z-index:100001;width:270px;max-width:calc(100vw - 28px);padding:12px;
-        border-radius:16px;background:#11181bf2;color:#e6edf0;border:1px solid #3ec6d055;box-shadow:0 10px 30px #000a;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;display:none;backdrop-filter:blur(6px)}
-      #brc-upd b.v{color:#1ec27a}
-      #brc-upd button{width:100%;margin-top:8px;padding:10px;border:none;border-radius:10px;font-weight:700;cursor:pointer}
-      #brc-upd .chk{background:#ffffff14;color:#eee}
-      #brc-upd .ins{background:linear-gradient(135deg,#3ec6d0,#1ec27a);color:#fff;display:none}
-      #brc-upd ul{margin:6px 0 0;padding-left:16px}
-      #brc-upd .st{margin-top:8px;opacity:.85}
+
+      #brc-upd{position:fixed;left:14px;bottom:150px;z-index:100001;width:300px;max-width:calc(100vw - 28px);max-height:calc(100vh - 180px);overflow:auto;
+        border-radius:20px;padding:1px;background:linear-gradient(135deg,#3ec6d0aa,#1ec27a33 45%,#ffffff12 65%,#3ec6d055);
+        box-shadow:0 18px 50px #000c;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;color:#e6edf0;
+        opacity:0;transform:translateY(10px) scale(.97);transform-origin:bottom left;pointer-events:none;transition:opacity .2s,transform .2s}
+      #brc-upd.open{opacity:1;transform:none;pointer-events:auto}
+      #brc-upd .in{border-radius:19px;background:#11181bf5;padding:16px;backdrop-filter:blur(8px)}
+      #brc-upd .hd{display:flex;align-items:center;gap:12px}
+      #brc-upd .logo{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,#3ec6d0,#1ec27a);flex:none}
+      #brc-upd .nm{font-size:16px;font-weight:800;white-space:nowrap}
+      #brc-upd .sb{font-size:12px;color:#8b9aa1}
+      #brc-upd .ver{margin-left:auto;padding:3px 9px;border-radius:20px;background:#1ec27a22;color:#1ec27a;font-weight:800;font-size:12px}
+      #brc-upd .card{margin-top:14px;padding:12px;border-radius:14px;background:#ffffff08;border:1px solid #ffffff12}
+      #brc-upd .card.new{background:#ff546812;border-color:#ff546844}
+      #brc-upd .card.ok{background:#1ec27a10;border-color:#1ec27a33}
+      #brc-upd .row1{display:flex;align-items:center;gap:8px;font-weight:700}
+      #brc-upd .tm{font-size:11px;color:#8b9aa1;margin-top:4px}
+      #brc-upd ul{margin:8px 0 0;padding-left:18px;color:#c9d4d8}
+      #brc-upd li{margin:3px 0}
+      #brc-upd .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:10px;padding:11px;border:none;border-radius:12px;
+        font-weight:800;font-size:13px;cursor:pointer;color:#e6edf0;background:#ffffff10}
+      #brc-upd .btn.pri{background:linear-gradient(135deg,#3ec6d0,#1ec27a);color:#fff;box-shadow:0 6px 18px #1ec27a44}
+      #brc-upd .btn:active{transform:scale(.97)}
+      #brc-upd .btn.spin span{display:inline-block;animation:brcrot .8s linear infinite}
+      @keyframes brcrot{to{transform:rotate(360deg)}}
+      #brc-upd .ttl{margin:16px 0 6px;font-size:11px;font-weight:800;letter-spacing:.08em;color:#8b9aa1}
+      #brc-upd .opt{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:#ffffff08;margin-bottom:6px;cursor:pointer}
+      #brc-upd .opt .tx{flex:1}
+      #brc-upd .opt .tx small{display:block;color:#8b9aa1;font-size:11px}
+      #brc-upd .sw{position:relative;width:40px;height:23px;border-radius:20px;background:#ffffff22;flex:none;transition:.2s}
+      #brc-upd .sw::after{content:'';position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:#fff;transition:.2s}
+      #brc-upd .opt.on .sw{background:#1ec27a}
+      #brc-upd .opt.on .sw::after{left:20px}
+      #brc-upd .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+      #brc-upd .grid .btn{margin-top:0;font-size:12px;padding:10px 6px}
+      #brc-upd .ft{margin-top:14px;text-align:center;font-size:11px;color:#8b9aa1}
+      #brc-upd .ft a{color:#3ec6d0;text-decoration:none;font-weight:700}
     `;
     document.head.appendChild(st);
 
     const fab = document.createElement('button');
     fab.id = 'brc-fab';
     fab.title = 'Скрипт кураторов';
-    fab.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
-      <circle cx="12" cy="12" r="3"/></svg><span class="dot"></span>`;
+    fab.innerHTML = GEAR + '<span class="dot"></span>';
+
+    const OPTS = [
+      ['auto_send', false, 'Мгновенная отправка', 'Ответ уходит сразу по клику, без кнопки «Отправить»'],
+      ['queue', true, 'Таймеры в разделах', 'Очередь и сроки 72 ч в списке тем'],
+      ['min', false, 'Свёрнутая панель', 'Панель проверки открывается свёрнутой'],
+    ];
+
     const pnl = document.createElement('div');
     pnl.id = 'brc-upd';
-    pnl.innerHTML = `
-      <div><b>Скрипт кураторов</b></div>
-      <div>Версия: <b class="v">${VERSION}</b></div>
-      <div class="st" id="brc-upd-st"></div>
-      <div id="brc-upd-notes"></div>
-      <button class="ins" id="brc-upd-ins">⬇️ Установить обновление</button>
-      <button class="chk" id="brc-upd-chk">🔄 Проверить обновления</button>
-    `;
-    document.body.append(fab, pnl);
-    fab.onclick = () => { const o = pnl.style.display !== 'block'; pnl.style.display = o ? 'block' : 'none'; fab.classList.toggle('open', o); };
+    pnl.innerHTML = `<div class="in">
+      <div class="hd">
+        <div class="logo">${GEAR}</div>
+        <div><div class="nm">Скрипт кураторов</div><div class="sb">Khabarovsk 49</div></div>
+        <div class="ver">v${VERSION}</div>
+      </div>
 
+      <div class="card" id="brc-upd-card">
+        <div class="row1" id="brc-upd-st">Обновления ещё не проверялись</div>
+        <div class="tm" id="brc-upd-tm"></div>
+        <div id="brc-upd-notes"></div>
+        <button class="btn pri" id="brc-upd-ins" style="display:none">⬇️ Установить обновление</button>
+        <button class="btn" id="brc-upd-chk"><span>🔄</span> Проверить обновления</button>
+      </div>
+
+      <div class="ttl">НАСТРОЙКИ</div>
+      ${OPTS.map(([k, d, n, h]) => `<div class="opt ${ls.get(k, d) ? 'on' : ''}" data-k="${k}" data-d="${d}">
+        <div class="tx">${n}<small>${h}</small></div><div class="sw"></div></div>`).join('')}
+
+      <div class="ttl">ИНСТРУМЕНТЫ</div>
+      <div class="grid">
+        <button class="btn" id="brc-clr">🧹 Сбросить кэш</button>
+        <button class="btn" id="brc-cust">🗑 Свои причины</button>
+      </div>
+
+      <div class="ft">Сделано для кураторов форума · <a href="https://github.com/IgorAkentev/br-curator" target="_blank">GitHub</a></div>
+    </div>`;
+    document.body.append(fab, pnl);
+
+    const setOpen = (o) => { pnl.classList.toggle('open', o); fab.classList.toggle('open', o); };
+    fab.onclick = (e) => { e.stopPropagation(); setOpen(!pnl.classList.contains('open')); };
+    document.addEventListener('click', (e) => { if (!pnl.contains(e.target) && e.target !== fab) setOpen(false); });
+
+    pnl.querySelectorAll('.opt').forEach((o) => {
+      o.onclick = () => {
+        const v = !o.classList.contains('on');
+        o.classList.toggle('on', v);
+        ls.set(o.dataset.k, v);
+        if (o.dataset.k === 'min') document.getElementById('brc')?.classList.toggle('min', v);
+      };
+    });
+
+    const say = (m) => { const b = pnl.querySelector('#brc-upd-st'); const old = b.innerHTML; b.innerHTML = m; setTimeout(() => (b.innerHTML = old), 1800); };
+    pnl.querySelector('#brc-clr').onclick = () => {
+      Object.keys(localStorage).filter((k) => k.startsWith('brc_c_')).forEach((k) => localStorage.removeItem(k));
+      say('🧹 Кэш поиска очищен');
+    };
+    pnl.querySelector('#brc-cust').onclick = () => {
+      const n = ['bio', 'sit', 'org'].reduce((a, k) => a + ls.get('custom_' + k, []).length, 0);
+      if (!n) return say('Своих причин пока нет');
+      if (!confirm(`Удалить все свои причины (${n})?`)) return;
+      ['bio', 'sit', 'org'].forEach((k) => ls.set('custom_' + k, []));
+      say('🗑 Свои причины удалены');
+    };
+
+    const card = pnl.querySelector('#brc-upd-card');
     const stEl = pnl.querySelector('#brc-upd-st');
+    const tmEl = pnl.querySelector('#brc-upd-tm');
     const notesEl = pnl.querySelector('#brc-upd-notes');
     const insBtn = pnl.querySelector('#brc-upd-ins');
+    const chkBtn = pnl.querySelector('#brc-upd-chk');
     insBtn.onclick = () => { location.href = UPDATE_URL; }; // Tampermonkey сам откроет окно установки
 
-    const last = ls.get('last_check', 0);
-    stEl.textContent = last ? `Последняя проверка: ${new Date(last).toLocaleString('ru-RU')}` : 'Ещё не проверялось';
+    const showTime = () => {
+      const last = ls.get('last_check', 0);
+      tmEl.textContent = last ? 'Проверено: ' + new Date(last).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    };
+    showTime();
 
     async function check(manual) {
-      if (!UPDATE_URL.startsWith('https://')) {
-        stEl.textContent = '⚠️ Ссылка на обновления не настроена (UPDATE_URL).';
-        return;
-      }
-      stEl.textContent = 'Проверяю…';
+      if (!UPDATE_URL.startsWith('https://')) { stEl.textContent = '⚠️ Ссылка на обновления не настроена'; return; }
+      chkBtn.classList.add('spin');
       try {
         const src = await (await fetch(UPDATE_URL + '?t=' + Date.now(), { cache: 'no-store' })).text();
         const remote = (src.match(/@version\s+([\d.]+)/) || [])[1];
         if (!remote) throw new Error('не нашёл @version');
         ls.set('last_check', Date.now());
+        showTime();
         if (verCmp(remote, VERSION) > 0) {
           const notes = [...src.matchAll(/\/\/\s*@note\s+(.+)/g)].map((m) => m[1])
             .filter((n) => { const v = (n.match(/^([\d.]+)/) || [])[1]; return !v || verCmp(v, VERSION) > 0; });
-          stEl.innerHTML = `🔥 Доступна версия <b class="v">${remote}</b>`;
-          notesEl.innerHTML = notes.length ? `<ul>${notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : '';
-          insBtn.style.display = 'block';
+          card.className = 'card new';
+          stEl.innerHTML = `🔥 Доступна версия <span style="color:#1ec27a">${remote}</span>`;
+          notesEl.innerHTML = notes.length ? `<ul>${notes.map((n) => `<li>${n.replace(/^[\d.]+\s*—\s*/, '')}</li>`).join('')}</ul>` : '';
+          insBtn.style.display = 'flex';
           fab.querySelector('.dot').style.display = 'block';
-          if (!manual) pnl.style.display = 'block';
+          if (!manual) setOpen(true);
         } else {
-          stEl.textContent = `✅ Последняя версия (${VERSION})`;
+          card.className = 'card ok';
+          stEl.innerHTML = '✅ Установлена последняя версия';
           notesEl.innerHTML = '';
           insBtn.style.display = 'none';
           fab.querySelector('.dot').style.display = 'none';
         }
       } catch (e) {
+        card.className = 'card';
         stEl.textContent = '❌ Не удалось проверить: ' + e.message;
       }
+      chkBtn.classList.remove('spin');
     }
 
-    pnl.querySelector('#brc-upd-chk').onclick = () => check(true);
-    if (Date.now() - last > CHECK_EVERY_H * 3600e3) check(false);
+    chkBtn.onclick = () => check(true);
+    if (Date.now() - ls.get('last_check', 0) > CHECK_EVERY_H * 3600e3) check(false);
   })();
 
   /* ===================== 3. ОЧЕРЕДЬ НА СТРАНИЦЕ РАЗДЕЛА ===================== */
 
   (function queue() {
+    if (!ls.get('queue', true)) return;
     const m = location.pathname.match(/^\/forums\/[^/]*\.(\d+)\/?/);
     if (!m || !SECTIONS[m[1]]) return;
     const items = [...document.querySelectorAll('.structItem--thread')];
@@ -603,7 +694,7 @@
     if (!insertReply(html)) return toast('Не нашёл поле ответа');
     pending = opts;
     showSend('📨 Отправить' + (opts.close ? ' + закрыть' : '') + (opts.sticky ? ' + закрепить' : ''));
-    if (AUTO_SEND) await finish();
+    if (ls.get('auto_send', false)) await finish();
     else toast('Ответ вставлен — проверь и жми «Отправить»');
   }
 
